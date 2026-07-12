@@ -1,0 +1,38 @@
+# 独自データ取込マニフェスト（1ソース1ファイル）= "データ契約"
+# 承認(approved:true)されるまで学習パイプラインに投入しない運用。
+source_id: "SRC-0001"
+name: "<ソース名 例 社内FAQ集>"
+owner: { dept: "<部署>", contact: "<担当>" }
+origin: { system: "<出所システム/パス>", obtained_date: "2026-01-01" }
+
+# 権利・許諾（DUO=Data Use Ontology の考え方）
+license_or_terms: "<ライセンス or 社内規程>"
+permission: "internal-training-allowed"     # 例 internal-training-allowed / rag-only / no-redistribution
+consent: { basis: "<契約/同意の根拠>", ref: "<文書ID>" }
+
+# 分類
+classification:
+  sensitivity: "internal"                   # public / internal / confidential / restricted
+  contains_pii: true
+  pii_types: ["氏名", "メール", "電話"]
+  contains_secrets: false
+
+# 用途（レッドラインに触れるものは never）
+allowed_use: ["rag-only"]                  # train / eval / rag-only / never（社内資料はまずrag-only推奨）
+acl_default: ["role:all-staff"]            # 取得時アクセス制御の既定（rag-only）。機微資料は絞る
+redlines:                                   # これらは学習に絶対入れない
+  - "顧客個人情報（マスク不能なもの）"
+  - "認証情報・秘密鍵"
+  - "規制・NDA対象データ"
+
+# 取込前に必須の変換
+transforms_required: ["pii_masking", "chunking", "license_stamp"]
+
+# 保守
+retention: { period: "<保持期間>", deletion_process: "<削除手順>", opt_out_supported: true }
+
+# 来歴（PROV-O）
+provenance: { ingested_by: "<担当>", curator_version: "<版>", checksum: "<sha256>" }
+
+# 承認（人手ゲート。true になるまで curate に渡さない）
+approver: { name: "<承認者>", role: "<役職>", approved: false, approved_at: null }

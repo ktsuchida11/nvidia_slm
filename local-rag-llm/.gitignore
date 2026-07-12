@@ -1,0 +1,22 @@
+# 秘匿情報・鍵（絶対にコミットしない）
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+age.key
+.config/sops/
+secrets.*
+# モデル・データ（サイズ大 + 機密の可能性）
+models/
+data/
+!data/.gitkeep
+*.gguf
+*.safetensors
+# 実行時生成物
+.venv/
+__pycache__/
+*.pyc
+results/
+checkpoints/
+mlruns/

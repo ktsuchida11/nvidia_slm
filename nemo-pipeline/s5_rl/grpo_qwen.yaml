@@ -1,0 +1,46 @@
+# S5 GRPO（NeMo-RL想定の骨子。実キー名は NVIDIA-NeMo/RL examples/configs を正とする）
+policy:
+  model_name: /ckpt/sft            # SFT成果から開始（base=Nemotron-Nano-9B-v2-Japanese）
+  train_backend: dtensor           # 小規模はdtensor、9B多GPUはmegatron検討
+grpo:
+  num_generations: 8               # group size（VRAMと相談）
+  max_new_tokens: 512              # 生成タスクは長め、解析タスクは256で十分
+reward:
+  module: /scripts/reward.py       # 検証可能報酬（評価セットとは分離）
+  fn: reward_generation
+data:
+  train: /data/distilled/train.jsonl
+cluster:
+  gpus: 4                          # 9B想定=4×L40S(g6e.12xlarge) or 2×A100
+# --- 64GBローカルGPU用プロファイル(Route L, 9Bギリギリ) ---------------------
+# cluster: { gpus: 1 }
+# grpo:    { num_generations: 4, max_new_tokens: 384 }   # 絞りノブ1,2
+# policy:  { max_seq_len: 2048 }                          # 絞りノブ3（キー名は実レシピ準拠）
+# generation: { gpu_memory_utilization: 0.4 }             # 絞りノブ5（colocated時）
+# LoRA必須+activation checkpointing。OOMが続けばUnslothルート or 借りGPUへ（README参照）
+logger:                            # NeMo-RL公式対応（閉域: 外部SaaSなし）
+  wandb_enabled: false             # クローズネットワーク方針によりW&Bは使わない
+  tensorboard_enabled: true        # 保険（/ckpt配下に出力→make tensorboard で閲覧）
+  mlflow_enabled: true             # 主役（セルフホストMLflow）
+  tensorboard: { log_dir: /ckpt/tb }
+  mlflow:
+    experiment_name: nemo-rl-grpo
+    run_name: grpo-qwen
+    tracking_uri: ${MLFLOW_TRACKING_URI}   # make grpo が注入（既定 http://host.docker.internal:5000）
+checkpoint:
+  dir: /ckpt/grpo
+  save_interval: 200               # spot中断前提
+logger:                            # ★クローズド網: 外部送信ロガーは使わない
+  wandb_enabled: false
+  tensorboard_enabled: true        # ファイルベース(完全オフライン)。/results/tb を tensorboard --logdir で閲覧
+  mlflow_enabled: true             # NeMo-RL公式対応。自前MLflowサーバ(:5000)へ
+  tensorboard: { log_dir: /results/tb }
+  mlflow:
+    experiment_name: grpo-qwen
+    run_name: grpo-9b
+    tracking_uri: ${MLFLOW_TRACKING_URI}   # make が注入(既定 http://host.docker.internal:5000)
+notes: |
+  - ★Nemotron-H(Mambaハイブリッド)のGRPO対応はNeMo-RLレシピで要確認（docs/06）。未対応ならSFT+Nemotron公式データで代替。
+  - 報酬はreasoningトレースを除いた最終回答に対して採点する前処理を入れる。
+  - まず4B・1GPUで報酬と配管を検証してから9Bへ。
+  - 学習中ヘルスチェック: 空応答/反復(reward.pyのpenalty発火率)を監視。

@@ -1,0 +1,28 @@
+# DevContainer 用の追加サービス定義（compose.yml と合成される）
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    command: sleep infinity          # VS Code がアタッチするための常駐
+    volumes:
+      - ..:/workspace:cached
+      # age 鍵（SOPS復号用）をホストから読み取り専用で
+      - ${HOME}${USERPROFILE:-}/.config/sops:/home/vscode/.config/sops:ro
+    environment:
+      # コンテナ間はサービス名 + コンテナ内ポートで直結（db:5432 であって 5433 ではない）
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:?set in .env}@db:5432/${POSTGRES_DB:-market_report}
+      DATABASE_URL_ASYNC: postgresql+psycopg_async://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:?set in .env}@db:5432/${POSTGRES_DB:-market_report}
+      LITELLM_BASE_URL: http://litellm:4000/v1
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set in .env}
+      PRESIDIO_ANALYZER_URL: http://presidio-analyzer:3000
+      PRESIDIO_ANONYMIZER_URL: http://presidio-anonymizer:3000
+      LANGFUSE_HOST: http://langfuse-web:3000
+    depends_on:
+      db:
+        condition: service_healthy
+      litellm:
+        condition: service_started
+    networks:
+      - default
+      - langfuse_default             # Langfuse(別compose)へサービス名で到達

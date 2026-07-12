@@ -1,0 +1,26 @@
+# S4 SFT/LoRA（NeMo Framework想定のパラメータ骨子。実キー名はコンテナ内レシピに合わせる）
+model:
+  base: nvidia/NVIDIA-Nemotron-Nano-9B-v2-Japanese   # 商用可・要HF規約同意。docs/06参照
+  peft: lora
+  lora: { r: 16, alpha: 32, dropout: 0.05 }
+data:
+  train: /data/distilled/train.jsonl
+  valid: /data/distilled/valid.jsonl   # held-out はここに入れない
+trainer:
+  precision: bf16
+  max_steps: 1000
+  val_check_interval: 100              # ★ SFT中も検証を回し、終了後すぐ S6 eval を実行
+  ckpt_dir: /ckpt/sft
+exp_manager:                           # NeMo Framework: MLflow/TensorBoardロガー(クローズド網対応)
+  create_tensorboard_logger: true
+  create_mlflow_logger: true
+  mlflow_logger_kwargs: { experiment_name: sft-qwen, tracking_uri: ${MLFLOW_TRACKING_URI} }
+  create_wandb_logger: false           # 外部送信は使わない
+logging:                            # NeMo Framework exp_manager（閉域構成）
+  create_tensorboard_logger: true
+  create_mlflow_logger: true        # 公式サポート（create_mlflow_logger / mlflow_logger_kwargs）
+  mlflow_logger_kwargs: { experiment_name: nemo-sft, tracking_uri: "${MLFLOW_TRACKING_URI}" }
+  create_wandb_logger: false        # クローズネットワーク方針
+notes: |
+  - 学習は借りGPU(EC2 NGC / Brev)。ローカル/Colab本流では実行しない。
+  - チェックポイントはS3/GCSへ退避（spot中断前提）。

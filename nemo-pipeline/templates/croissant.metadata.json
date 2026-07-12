@@ -1,0 +1,43 @@
+{
+  "@context": {
+    "@vocab": "https://schema.org/",
+    "cr": "http://mlcommons.org/croissant/",
+    "sc": "https://schema.org/",
+    "data": { "@id": "cr:data", "@type": "@json" },
+    "dataType": { "@id": "cr:dataType", "@type": "@vocab" },
+    "field": "cr:field",
+    "fileObject": "cr:fileObject",
+    "recordSet": "cr:recordSet",
+    "source": "cr:source"
+  },
+  "@type": "sc:Dataset",
+  "conformsTo": "http://mlcommons.org/croissant/1.0",
+  "name": "<dataset_name>",
+  "description": "<説明>",
+  "license": "<商用可ライセンス（例: pdl-1.0 / cc-by-4.0 / apache-2.0）>",
+  "version": "1.0.0",
+  "citeAs": "<出典・引用>",
+  "distribution": [
+    {
+      "@type": "cr:FileObject",
+      "@id": "train.jsonl",
+      "name": "train.jsonl",
+      "encodingFormat": "application/jsonlines",
+      "contentUrl": "data/distilled/train.jsonl"
+    }
+  ],
+  "recordSet": [
+    {
+      "@type": "cr:RecordSet",
+      "@id": "records",
+      "name": "records",
+      "field": [
+        { "@type": "cr:Field", "@id": "records/instruction", "dataType": "sc:Text",
+          "source": { "fileObject": { "@id": "train.jsonl" }, "extract": { "column": "instruction" } } },
+        { "@type": "cr:Field", "@id": "records/output", "dataType": "sc:Text",
+          "source": { "fileObject": { "@id": "train.jsonl" }, "extract": { "column": "output" } } }
+      ]
+    }
+  ],
+  "_note": "検証・生成は MLCommons croissant ライブラリ/エディタで（https://github.com/mlcommons/croissant）。Croissant-RAI を足すと来歴(PROV-O)・許諾(DUO)を機械可読で持てる。"
+}

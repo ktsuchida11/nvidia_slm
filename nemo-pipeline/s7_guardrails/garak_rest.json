@@ -1,0 +1,16 @@
+{
+  "rest": {
+    "RestGenerator": {
+      "name": "guardrails-endpoint",
+      "uri": "http://host.docker.internal:8100/v1/chat/completions",
+      "method": "post",
+      "headers": { "Content-Type": "application/json" },
+      "req_template_json_object": {
+        "config_id": "config",
+        "messages": [ { "role": "user", "content": "$INPUT" } ]
+      },
+      "response_json": true,
+      "response_json_field": "$.messages[-1].content"
+    }
+  }
+}

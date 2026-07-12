@@ -1,0 +1,18 @@
+# S6 評価設定（s6_eval.py が読む）。合否=thresholds、比較=base/sft/grpo を同一held-outで。
+endpoint:
+  base_url: ${OPENAI_BASE_URL}      # llama.cpp/vLLM/NIM の OpenAI互換URL（環境変数優先）
+  model: nemotron-gen              # Nemotron生成モデル（vLLM配信）。解析評価時は該当モデル名に
+suites:
+  - name: heldout_task              # 合否判定の主役（S2が出力した評価専用セット）
+    path: /data/distilled/heldout.jsonl
+    thresholds:                     # 満たせない場合 exit 2（前段に戻る）
+      schema_valid: 1.0
+      analysis_match: 0.85
+      source_exists: 1.0
+      citation_format: 0.95
+  # 参考ベンチ（学習に使わない・別途 NeMo Evaluator/lm-eval で実行）
+  # - name: jp_finance
+  #   tasks: [japanese_lm_fin_harness]
+report: /results
+notes: |
+  base→SFT→GRPOの各時点で `--tag base|sft|grpo` を変えて実行し、results/eval_*.json を横並び比較。

@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/training-record.json",
+  "title": "学習レコード（指示＋来歴メタデータ）",
+  "description": "文書から作る1学習例の推奨スキーマ。s1_curate/s2_distillのmetaと整合。",
+  "type": "object",
+  "required": [
+    "id",
+    "task",
+    "output",
+    "meta"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "一意ID（ハッシュ等）"
+    },
+    "task": {
+      "enum": [
+        "analysis",
+        "generation",
+        "instruction",
+        "qa"
+      ]
+    },
+    "instruction": {
+      "type": "string",
+      "description": "指示（Alpaca形式）"
+    },
+    "input": {
+      "description": "追加入力（文字列 or 構造化。RAGならchunks等）"
+    },
+    "output": {
+      "description": "正解（教師出力）。文字列 or 構造化JSON"
+    },
+    "messages": {
+      "type": "array",
+      "description": "多ターンならOpenAI/ShareGPT形式で（instruction/outputの代替）",
+      "items": {
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "properties": {
+          "role": {
+            "enum": [
+              "system",
+              "user",
+              "assistant"
+            ]
+          },
+          "content": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": [
+        "source",
+        "license",
+        "provenance",
+        "allowed_use",
+        "split"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "出所（文書ID/URI/システム名）"
+        },
+        "source_chunk": {
+          "type": "string",
+          "description": "根拠チャンクの識別子"
+        },
+        "license": {
+          "type": "string",
+          "description": "商用可のみ（apache-2.0/mit/cc-by/cc-by-sa/cc0/pdl-1.0/gov-jp/own/synthetic）"
+        },
+        "provenance": {
+          "type": "object",
+          "required": [
+            "method",
+            "created_at"
+          ],
+          "properties": {
+            "method": {
+              "enum": [
+                "human",
+                "synthetic",
+                "teacher-distill",
+                "extracted"
+              ]
+            },
+            "teacher_model": {
+              "type": "string"
+            },
+            "created_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "curator_version": {
+              "type": "string"
+            },
+            "extraction": {
+              "type": "string",
+              "description": "抽出方法 (pdfium/pdfium_hybrid/ocr/python-pptx/vlm-caption:<model>)"
+            }
+          }
+        },
+        "pii_status": {
+          "enum": [
+            "none",
+            "masked",
+            "present"
+          ],
+          "description": "presentは学習不可"
+        },
+        "sensitivity": {
+          "enum": [
+            "public",
+            "internal",
+            "confidential",
+            "restricted"
+          ]
+        },
+        "allowed_use": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "train",
+              "eval",
+              "rag-only",
+              "never"
+            ]
+          },
+          "description": "この例を何に使ってよいか。neverが含まれれば学習に出さない"
+        },
+        "quality": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "category": {
+          "type": "string"
+        },
+        "split": {
+          "enum": [
+            "train",
+            "valid",
+            "heldout"
+          ]
+        },
+        "consent_ref": {
+          "type": "string",
+          "description": "同意/契約の根拠（独自データ用）"
+        },
+        "review": {
+          "type": "object",
+          "properties": {
+            "approved_by": {
+              "type": "string"
+            },
+            "approved_at": {
+              "type": "string"
+            }
+          }
+        },
+        "acl": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "閲覧可能なロール/グループ（rag-onlyの取得時アクセス制御に使用）"
+        },
+        "version": {
+          "type": "string",
+          "description": "資料バージョン（鮮度/失効管理）"
+        },
+        "source_format": {
+          "type": "string",
+          "description": "元文書形式 (pdf/pptx/docx/html/txt...)"
+        },
+        "locator": {
+          "type": "string",
+          "description": "ページ/スライド位置 (例 'p.12', 'slide 8')"
+        },
+        "modality": {
+          "enum": [
+            "text",
+            "table",
+            "chart",
+            "figure-caption",
+            "ocr",
+            "speaker-notes"
+          ],
+          "description": "抽出要素の種類（図表入り文書用）"
+        }
+      }
+    }
+  }
+}

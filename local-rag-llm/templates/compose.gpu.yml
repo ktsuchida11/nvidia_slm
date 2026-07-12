@@ -1,0 +1,115 @@
+# =============================================================================
+# compose.gpu.yml — GPU面（Linux or WSL2 のみ・本番推論専用）
+#   llama.cpp server(既定) で qwen3-analysis(4B) / qwen3-gen(9B) を配信。
+#   ※ 学習(Unsloth)はここに置かない。学習は常に Colab/EC2。
+#   ※ Mac(Apple Silicon)は起動不可（MLXネイティブ or 別GPU機へ委譲）。
+#
+# 前提: NVIDIA GPU + NVIDIA Container Toolkit
+#   確認: docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+#   Windows: WSL2 + Docker Desktop 4.30+。RTX5090(Blackwell,sm_120)は
+#            ドライバパスに固有の注意（設計書 12.3 (b)）。
+#
+# 起動: docker compose -f compose.yml -f compose.gpu.yml up -d
+#   → LiteLLM からはサービス名 http://llm-analysis:8000/v1 で直結（既定値のまま動く）
+#
+# モデル配置: ./models/ に量子化済みGGUFのみ置く（学習成果物）。
+#   - qwen3-analysis.gguf  (クエリ解析 4B, 例 Q4_K_M ≈ 2.5GB)
+#   - qwen3-gen.gguf       (回答生成 9B, 例 Q4_K_M ≈ 5.5GB)
+#   RTX5090 32GB なら 4B+9B+KVキャッシュ同居で余裕あり。
+# =============================================================================
+
+services:
+  # --- クエリ解析（4B / Phase 1）: コンテナ間 llm-analysis:8000 ----------
+  llm-analysis:
+    security_opt: ["no-new-privileges:true"]
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    command: >
+      -m /models/qwen3-analysis.gguf
+      --host 0.0.0.0 --port 8000
+      -ngl 99
+      --parallel 4 -c 16384
+      --jinja
+      --alias qwen3-analysis
+    # --parallel 4: 朝のレポート配信直後の同時実行ピーク対策（逐次処理のままにしない）
+    # -c 16384    : 全スロット合計。1スロットあたり 16384/4=4096 トークン
+    ports:
+      - "127.0.0.1:8001:8000"      # ホストからの疎通確認用（コンテナ間はサービス名）
+    volumes:
+      - ./models:/models:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]   # curlが無い場合はこのブロックを削除
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s            # モデルロード待ち
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all           # 単一GPUなら device_ids: ["0"] でも可
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # --- 回答生成（Nemotron-Nano-9B-v2-Japanese / vLLM）: コンテナ間 llm-gen:8000 ---
+  # ★ Nemotronは Mambaハイブリッド+reasoning のため vLLM必須（llama.cpp/GGUF不可）。設計06/docs参照。
+  llm-gen:
+    image: vllm/vllm-openai:latest   # ★Nemotron-H対応版に固定推奨（latestで起動しない場合はモデルカード記載版へ）
+    command: >
+      --model nvidia/NVIDIA-Nemotron-Nano-9B-v2-Japanese
+      --served-model-name nemotron-gen
+      --host 0.0.0.0 --port 8000
+      --trust-remote-code
+      --mamba_ssm_cache_dtype float32
+      --max-num-seqs 64
+      --max-model-len 131072
+      # 任意(量子化): VRAMを稼ぐなら --quantization fp8 （必要に応じ --kv-cache-dtype fp8）。bf16が既定。
+      # 任意: 最終回答のみを message.content にするなら reasoning-parser を有効化（モデルカードのプラグイン使用）
+    ipc: host
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:?HFトークン必須（Nemotronはgated・規約同意が必要）}
+    ports:
+      - "127.0.0.1:8002:8000"
+    volumes:
+      - ${HF_HOME:-./hf-cache}:/root/.cache/huggingface   # 注: composeは ~ を展開しない。絶対パス or 相対で
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request as u;u.urlopen('http://localhost:8000/health')\""]
+      interval: 20s
+      timeout: 5s
+      retries: 15
+      start_period: 300s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    # OOM時: --max-num-seqs を下げる。mambaフラグは精度維持に必須。GGUF系(Qwen)を使うなら llama.cpp版へ差し替え可。
+
+  # --- (任意) Llama Guard 入力レール / Phase 3: llm-guard:8000 -----------
+  # llm-guard:
+  #   image: ghcr.io/ggml-org/llama.cpp:server-cuda
+  #   command: >
+  #     -m /models/llama-guard-3-8b.gguf
+  #     --host 0.0.0.0 --port 8000 -ngl 99 --parallel 2 -c 8192 --jinja --alias llama-guard
+  #   ports: ["127.0.0.1:8003:8000"]
+  #   volumes: ["./models:/models:ro"]
+  #   deploy: { resources: { reservations: { devices: [{ driver: nvidia, count: all, capabilities: [gpu] }] } } }
+  #   restart: unless-stopped
+
+# -----------------------------------------------------------------------------
+# 代替: 高スループットが要るなら vLLM（OpenAI互換）。単機・本規模ならllama.cppで十分。
+#   llm-gen:
+    security_opt: ["no-new-privileges:true"]
+#     image: vllm/vllm-openai:latest   # ★Nemotron-H対応版に固定推奨（latestで起動しない場合はモデルカード記載版へ）
+#     command: >
+#       --model /models/qwen3-gen --served-model-name qwen3-gen
+#       --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.85 --max-model-len 8192
+#     ipc: host
+#     ports: ["127.0.0.1:8002:8000"]
+#     volumes: ["./models:/models:ro"]
+#     deploy: { resources: { reservations: { devices: [{ driver: nvidia, count: all, capabilities: [gpu] }] } } }
+#   ※ vLLMはネイティブWindows非対応 → WSL2上で。Qwen3.5はOllama不可(llama.cpp/vLLMで配信)。
+# -----------------------------------------------------------------------------

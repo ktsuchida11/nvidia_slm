@@ -1,0 +1,110 @@
+# =============================================================================
+# compose.yml — CPU/API面（全OS共通: Mac / Windows / Linux）
+#   db(pgvector) / LiteLLM / Presidio = 既定で起動（開発インフラ）
+#   app(Streamlit) = profile "app"（デモ/本番時のみ。開発はDevContainerで実施）
+#
+# 起動:
+#   開発インフラのみ       : docker compose up -d
+#   app込み(デモ/本番)     : docker compose --profile app up -d
+#   GPUホスト(Linux/WSL2)  : docker compose -f compose.yml -f compose.gpu.yml [--profile app] up -d
+#
+# 前提: Langfuse(別compose)の network を参照するため、未起動なら
+#       docker network create langfuse_default  で空ネットワークを作っておく
+# =============================================================================
+
+services:
+  # --- ベクタDB（既存 07-environment 準拠） -------------------------------
+  db:
+    image: pgvector/pgvector:pg17
+    ports:
+      - "127.0.0.1:5433:5432"          # ホストからの直接接続用（コンテナ間は db:5432）
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a strong DB password in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-market_report}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-app} -d $${POSTGRES_DB:-market_report}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # --- AIゲートウェイ（全LLM呼び出しの関所） -----------------------------
+  litellm:
+    security_opt: ["no-new-privileges:true"]
+    image: ghcr.io/berriai/litellm:main-stable    # latestではなくstable系を推奨
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    ports:
+      - "127.0.0.1:4000:4000"
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set a strong key in .env}
+      # ローカル推論サーバの場所:
+      #   同一compose(GPUホスト)     → サービス名で直結（既定）
+      #   別GPU機/ホスト直起動の場合 → .env で http://<IP or host.docker.internal>:8001/v1 に上書き
+      QWEN_ANALYSIS_BASE: ${QWEN_ANALYSIS_BASE:-http://llm-analysis:8000/v1}
+      QWEN_GEN_BASE: ${QWEN_GEN_BASE:-http://llm-gen:8000/v1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # 別ホスト委譲時の解決用（Linux対応）
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:4000/health/liveliness')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    # 注: GPU面(compose.gpu.yml)を併用しない環境では qwen3-* への接続は失敗するが、
+    #     litellm_config.yaml の fallbacks により Claude に自動フォールバックする。
+
+  # --- PII 検知/マスク（Phase 3 入力/出力レール、CPUで動作） --------------
+  presidio-analyzer:
+    security_opt: ["no-new-privileges:true"]
+    image: mcr.microsoft.com/presidio-analyzer:latest
+    ports:
+      - "127.0.0.1:5002:3000"
+    restart: unless-stopped
+  presidio-anonymizer:
+    security_opt: ["no-new-privileges:true"]
+    image: mcr.microsoft.com/presidio-anonymizer:latest
+    ports:
+      - "127.0.0.1:5001:3000"
+    restart: unless-stopped
+
+  # --- アプリ本体（デモ/本番時のみ。開発はDevContainerで） ----------------
+  app:
+    security_opt: ["no-new-privileges:true"]
+    profiles: ["app"]
+    build: .
+    ports:
+      - "127.0.0.1:8501:8501"   # 直接公開しない。外部提供はTLS+認証のリバースプロキシ経由
+    env_file: .env
+    environment:
+      LITELLM_BASE_URL: http://litellm:4000/v1
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set a strong key in .env}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:?set in .env}@db:5432/${POSTGRES_DB:-market_report}
+      PRESIDIO_ANALYZER_URL: http://presidio-analyzer:3000
+      PRESIDIO_ANONYMIZER_URL: http://presidio-anonymizer:3000
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse-web:3000}
+    volumes:
+      - ./data:/app/data
+      - ${MAILBOX_PATH:-./data}:/mail:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    networks:
+      - default
+      - langfuse_default
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+
+networks:
+  langfuse_default:
+    external: true    # 無ければ: docker network create langfuse_default

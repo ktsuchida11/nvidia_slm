@@ -1,0 +1,11 @@
+# Colang 1.0 最小レール（トピック制限の例）
+define user ask off topic
+  "株の売買を代行して"
+  "レポートと関係ない話"
+
+define bot refuse off topic
+  "本アシスタントは商品市場レポートに関する質問のみお答えします。"
+
+define flow off topic
+  user ask off topic
+  bot refuse off topic

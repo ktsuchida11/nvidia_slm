@@ -1,0 +1,20 @@
+# S3 DAPT設定の骨子（実キーはNeMo Frameworkの継続事前学習レシピを正とする）
+model:
+  base: nvidia/NVIDIA-Nemotron-Nano-9B-v2-Japanese   # 4Bで先に配管検証を推奨
+  peft: lora                                          # 64GBでは9BはLoRA-DAPT
+data:
+  corpus: /data/pretrain/corpus.jsonl                 # run_dapt.sh が S1出力から生成
+  seq_len: 2048
+trainer:
+  precision: bf16
+  max_steps: 500
+  micro_batch: 1
+  ckpt_dir: /ckpt/dapt
+exp_manager:                                          # 学習曲線は自前MLflow(:5000)へ
+  create_tensorboard_logger: true
+  create_mlflow_logger: true
+  mlflow_logger_kwargs: { experiment_name: dapt, tracking_uri: ${MLFLOW_TRACKING_URI} }
+  create_wandb_logger: false
+notes: |
+  - 効果はS6で判定（make eval TAG=dapt。改善なければ捨てる=評価ファースト）。
+  - held-out/評価データは絶対に混ぜない。ライセンスは商用可のみ(S1ゲート通過済が前提)。

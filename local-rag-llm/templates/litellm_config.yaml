@@ -1,0 +1,49 @@
+# =============================================================================
+# litellm_config.yaml — AIゲートウェイのモデル一覧 + フォールバック
+#   アプリは model 名だけで切り替える（routing.py）。
+# =============================================================================
+
+model_list:
+  # --- Claude（現行ID, 2026/6時点・確認済） --------------------------------
+  - model_name: claude-sonnet            # 回答生成（trend/comparison/column/ペルソナ重要）
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: claude-haiku             # クエリ解析フォールバック
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001   # スナップショットIDで固定（再現性）
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # --- ローカル（llama.cpp/vLLM の OpenAI互換） -----------------------------
+  - model_name: qwen3-analysis           # クエリ解析（4B / Phase 1）
+    litellm_params:
+      model: openai/qwen3-analysis        # --alias / served-model-name と一致させる
+      api_base: os.environ/QWEN_ANALYSIS_BASE   # 既定: http://llm-analysis:8000/v1（同一compose）
+      api_key: "sk-local"
+  - model_name: nemotron-gen             # 回答生成（Nemotron-Nano-9B-v2-Japanese / vLLM）
+    litellm_params:
+      model: openai/nemotron-gen            # served-model-name と一致
+      api_base: os.environ/NEMOTRON_GEN_BASE    # 既定: http://llm-gen:8000/v1
+      api_key: "sk-local"
+
+litellm_settings:
+  drop_params: true                      # ローカル未対応パラメータを無視
+  num_retries: 1
+  request_timeout: 60
+  # ★ 接続断・5xx時の自動フォールバック（設計の「フォールバック常設」のゲートウェイ側）
+  #   GPU面を起動していない環境(Mac等)でも、ローカル宛てが自動でClaudeに落ちて動く。
+  #   ※ 品質ゲート(source_exists等)による差し戻しはアプリ側 routing.py の責務（別物）。
+  fallbacks:
+    - qwen3-analysis: ["claude-haiku"]
+    - nemotron-gen: ["claude-sonnet"]
+  # Langfuseへゲートウェイレベルの監査ログを送る場合（Phase 3で有効化）:
+  # success_callback: ["langfuse"]
+  # failure_callback: ["langfuse"]
+  #   → 環境変数 LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST を litellm に付与
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+# メモ:
+# - Sonnet 4.6 = $3/$15, Haiku 4.5 = $1/$5, キャッシュ最大90%減（2026/6時点）。
+# - Anthropic のプロンプトキャッシュ(cache_control)は LiteLLM がパススルー。

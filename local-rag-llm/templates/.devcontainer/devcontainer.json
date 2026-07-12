@@ -1,0 +1,38 @@
+{
+  "name": "rag-chat-dev (CPU/API面)",
+
+  // compose統合型: db/litellm/presidio とサービス名で直結できる
+  //（host.docker.internal + 127.0.0.1バインドの組み合わせはLinuxで通らないため、この方式に統一）
+  "dockerComposeFile": ["../compose.yml", "docker-compose.dev.yml"],
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "lts" }
+  },
+
+  // 依存同期 + Claude Code 導入。秘匿情報は SOPS 復号で .env を生成（平文を置かない）
+  "postCreateCommand": "uv sync --group dev && npm i -g @anthropic-ai/claude-code",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "anthropic.claude-code"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/workspace/.venv/bin/python",
+        "editor.formatOnSave": true
+      }
+    }
+  },
+
+  "remoteUser": "vscode",
+
+  // DevContainer を閉じても infra(db/litellm)は残す
+  "shutdownAction": "none"
+
+  // 注: 学習(Unsloth)・GPU推論はこの DevContainer では行わない。
+  //     学習=Colab/EC2、推論=GPUホスト(compose.gpu.yml の別サービス)。
+}
