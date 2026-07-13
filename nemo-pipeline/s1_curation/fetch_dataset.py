@@ -17,12 +17,17 @@
 """
 import argparse, json, pathlib
 
-def main(repo: str, license_: str, out: str, limit: int):
-    from datasets import load_dataset  # pip install datasets
-    ds = load_dataset(repo, split="train")
+def main(repo: str, license_: str, out: str, limit: int, config: str | None = None):
+    from datasets import get_dataset_split_names, load_dataset  # pip install datasets
+    try:
+        ds = load_dataset(repo, config, split="train")
+    except ValueError:
+        splits = get_dataset_split_names(repo, config)
+        print(f"⚠ split 'train' なし → '{splits[0]}' を使用 (候補: {splits})")
+        ds = load_dataset(repo, config, split=splits[0])
     out_p = pathlib.Path(out); out_p.mkdir(parents=True, exist_ok=True)
     n = 0
-    safe = repo.replace("/", "__")
+    safe = repo.replace("/", "__") + (f"__{config}" if config else "")
     with (out_p / f"{safe}.jsonl").open("w", encoding="utf-8") as w:
         for row in ds:
             # 代表的なキーに対応（実カラム名はデータセットカードで確認）
@@ -44,4 +49,5 @@ if __name__ == "__main__":
                    help="HFカードの表記を正確に (例: apache-2.0 / cc-by-4.0 / cc-by-sa-4.0 / pdl-1.0 / gov-jp)")
     p.add_argument("--out", default="/data/raw")
     p.add_argument("--limit", type=int, default=0)
-    a = p.parse_args(); main(a.repo, a.license_, a.out, a.limit)
+    p.add_argument("--config", default=None, help="データセットのconfig名（必要な場合のみ。例: EDINET-Benchのearnings_forecast）")
+    a = p.parse_args(); main(a.repo, a.license_, a.out, a.limit, a.config)

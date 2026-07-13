@@ -36,11 +36,16 @@ FIN_KEYWORDS = ("市場","相場","先物","価格","需給","ヘッジ","金利
 MIN_CHARS, MAX_CHARS = 20, 20000
 NGRAM, NUM_PERM, FUZZY_THRESHOLD = 4, 64, 0.75  # 実測校正: 近似重複J≈0.82を捕捉、独立文書はJ≈0
 
+# 区切り文字(ハイフン/括弧/スペース)を必須にしている: 財務諸表は数値セルが連結した
+# 長い数字列を含み、区切り任意のパターンだと金額を大量誤マスクして本文を破壊するため
+# (EDINET実データで実測: PHONE_JP誤検知4,669件)。
+# 平文連番PII(区切りなしマイナンバー等)が想定される独自データでは presidio 併用を推奨
+# (local-rag-llm/templates の presidio-analyzer/anonymizer)。
 PII_PATTERNS = [
     ("EMAIL", re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")),
-    ("PHONE_JP", re.compile(r"(?<!\d)(0\d{1,4}[-(]?\d{1,4}[-)]?\d{3,4})(?!\d)")),
-    ("MYNUMBER", re.compile(r"(?<!\d)\d{4}[- ]?\d{4}[- ]?\d{4}(?!\d)")),
-    ("CREDIT", re.compile(r"(?<!\d)\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}(?!\d)")),
+    ("PHONE_JP", re.compile(r"(?<!\d)(0\d{1,4}[-(]\d{1,4}[-)]\d{3,4})(?!\d)")),
+    ("MYNUMBER", re.compile(r"(?<!\d)\d{4}[- ]\d{4}[- ]\d{4}(?!\d)")),
+    ("CREDIT", re.compile(r"(?<!\d)\d{4}[- ]\d{4}[- ]\d{4}[- ]\d{4}(?!\d)")),
 ]
 
 # ---- 基本処理 ----------------------------------------------------------------

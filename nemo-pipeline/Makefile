@@ -53,9 +53,9 @@ caption:             ## 図/スキャンをフロンティアAPI(Claude vision)�
 	   python /pipeline/s1_curation/caption_figures.py --in /docs_in --out /data/raw \
 	   --license $(or $(LICENSE),own) --model $(or $(MODEL),claude-sonnet-4-6) $(CAPTION_FLAGS)"
 
-fetch:               ## 金融データセット取得（商用可のみ。repo/licenseはHFカードで確認。docs/03参照）
+fetch:               ## 金融データセット取得（商用可のみ。repo/licenseはHFカードで確認。docs/03参照。LIMIT=Nで件数制限）
 	$(RUN) $(PY_IMG) bash -lc "(pip -q install datasets huggingface_hub 2>/dev/null || true) && \
-	  python /pipeline/s1_curation/fetch_dataset.py --repo $(REPO) --license $(LICENSE) --out /data/raw"
+	  python /pipeline/s1_curation/fetch_dataset.py --repo $(REPO) --license $(LICENSE) --out /data/raw $(if $(LIMIT),--limit $(LIMIT)) $(if $(CONFIG),--config $(CONFIG))"
 
 curate:              ## S1 収集・管理（CPUで可。Curator委譲は --engine curator）
 	$(RUN) $(PY_IMG) python /pipeline/s1_curation/s1_curate.py --in /data/raw --out /data/curated
