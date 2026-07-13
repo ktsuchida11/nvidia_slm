@@ -60,8 +60,8 @@ fetch:               ## 金融データセット取得（商用可のみ。repo/
 curate:              ## S1 収集・管理（CPUで可。Curator委譲は --engine curator）
 	$(RUN) $(PY_IMG) python /pipeline/s1_curation/s1_curate.py --in /data/raw --out /data/curated
 
-distill:             ## S2 蒸留（要 ANTHROPIC_API_KEY）
-	$(RUN) -e ANTHROPIC_API_KEY $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
+distill:             ## S2 蒸留（要 ANTHROPIC_API_KEY。LiteLLM経由は ANTHROPIC_BASE_URL/TEACHER_MODEL を指定）
+	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
 	  python /pipeline/s2_distillation/s2_distill.py --in /data/curated --out /data/distilled \
 	  --n-analysis $(or $(N_ANALYSIS),300) --n-generation $(or $(N_GEN),100)"
 distill-dry:         ## S2 配管検証（API不要・数秒）
