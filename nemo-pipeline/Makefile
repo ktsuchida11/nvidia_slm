@@ -122,15 +122,17 @@ eval-dry:            ## S6 配管検証（エンドポイント不要・全指�
 	  python /pipeline/s6_evaluation/s6_eval.py --config /pipeline/s6_evaluation/eval.yaml --mode dry --tag dry"
 
 # --- S7 ガードレール ----------------------------------------------------------
-guardrails:          ## サーバ起動（:8100）
-	docker run --rm -d --name guardrails -p 127.0.0.1:8100:8100 \
+GUARD_PORT ?= 8100
+guardrails:          ## サーバ起動（既定:8100。衝突時は GUARD_PORT で変更）
+	docker run --rm -d --name guardrails -p 127.0.0.1:$(GUARD_PORT):8100 \
 	  -v $(HOST_PWD)/s7_guardrails/config:/config $(PY_IMG) bash -lc \
 	  "(pip -q install nemoguardrails[all] 2>/dev/null || true) && nemoguardrails server --config /config --port 8100"
-guardrails-test:     ## 検証（公式evaluate + garak攻撃）
+guardrails-test:     ## 検証（公式evaluate + garak攻撃。GUARD_PORTをgarak設定に反映）
 	$(RUN) --add-host=host.docker.internal:host-gateway $(PY_IMG) bash -lc \
 	  "(pip -q install nemoguardrails[all] garak 2>/dev/null || true) && \
+	   sed 's/:8100/:$(GUARD_PORT)/' /pipeline/s7_guardrails/garak_rest.json > /tmp/garak_rest.json && \
 	   nemoguardrails evaluate moderation --config /pipeline/s7_guardrails/config && \
-	   python -m garak --model_type rest --generator_option_file /pipeline/s7_guardrails/garak_rest.json \
+	   python -m garak --model_type rest --generator_option_file /tmp/garak_rest.json \
 	     --probes promptinject --report_prefix /results/garak"
 
 clean:

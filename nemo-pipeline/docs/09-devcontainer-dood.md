@@ -38,8 +38,22 @@ make setup                                    # OK
 # docs/20 TS-01〜03 サンプル生成 → data/raw/sample.jsonl
 make curate       # kept=2 rejected=3 fuzzy_dropped=1 pii_masked={EMAIL,PHONE_JP} → TS-01/02/03 合格
 make distill-dry  # total=301 train=242/valid=29/heldout=30, rejects={} → TS-04 合格
-make eval-dry     # "pass": true 全指標1.0 exit 0 → TS-06 合格
+make eval-dry     # "pass": true 全指標1.0 exit 0 → TS-06 合格（nemo-tools:latestでも合格）
+make build-tools  # nemo-tools:latest ビルド成功（mlflow同梱）
+make tracking     # MLflow稼働 health=200（:15252, MLFLOW_IMG=nemo-tools:latest）
+make guardrails   # サーバ起動・設定ロードOK（:18100）。レール実発火の検証は推論エンドポイント接続後
 ```
+
+## このホストで判明したポート事情（127.0.0.1バインドは macOS 側に載る）
+
+| ポート | 状態 | 対処（hostpath.mk） |
+|---|---|---|
+| 5000 | AirPlay Receiver が使用 | `MLFLOW_PORT := 15252` |
+| 5001 / 5252 | 他プロセス or Docker Desktopの残留予約 | 〃 |
+| 8100 | 他プロジェクトが使用 | `GUARD_PORT := 18100`（garak設定へは guardrails-test が自動反映） |
+
+さらに `ghcr.io/mlflow/mlflow:latest`(arm64) は pydantic ImportError で起動不能のため、
+`MLFLOW_IMG := nemo-tools:latest`（mlflowを焼き込み済み）を使用する。
 
 ## この環境での役割分担
 
