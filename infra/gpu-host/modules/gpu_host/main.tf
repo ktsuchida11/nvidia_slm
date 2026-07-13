@@ -45,6 +45,31 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "ckpt" {
   }
 }
 
+# 誤削除・チェックポイント破壊からの復旧用
+resource "aws_s3_bucket_versioning" "ckpt" {
+  bucket = aws_s3_bucket.ckpt.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# 平文(非TLS)アクセスを拒否
+resource "aws_s3_bucket_policy" "ckpt_tls_only" {
+  bucket     = aws_s3_bucket.ckpt.id
+  depends_on = [aws_s3_bucket_public_access_block.ckpt]
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DenyInsecureTransport"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource  = [aws_s3_bucket.ckpt.arn, "${aws_s3_bucket.ckpt.arn}/*"]
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    }]
+  })
+}
+
 # ---- IAM ---------------------------------------------------------------------
 resource "aws_iam_role" "gpu" {
   name = "${local.prefix}-gpu-role"
@@ -165,6 +190,8 @@ resource "aws_instance" "gpu" {
   iam_instance_profile        = aws_iam_instance_profile.gpu.name
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
     ckpt_bucket = aws_s3_bucket.ckpt.bucket
+    nemo_rl_ref = var.nemo_rl_git_ref
+    vllm_image  = var.vllm_image
   })
 
   dynamic "instance_market_options" {

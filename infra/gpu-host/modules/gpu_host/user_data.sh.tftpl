@@ -25,14 +25,15 @@ export CKPT_BUCKET="${ckpt_bucket}"
 export PIPELINE_DIR=/opt/nvidia_slm/nvidia_slm/nemo-pipeline
 EOF
 
-# --- 閉域準備: NeMo-RLを事前clone（make sft/grpo が vendor/RL を優先使用） ----
+# --- 閉域準備: NeMo-RLを事前clone（バージョン固定。make sft/grpo が vendor/RL を優先使用） ----
 if [ ! -d /opt/nvidia_slm/vendor/RL ]; then
-  sudo -u ubuntu git clone --depth 1 https://github.com/NVIDIA-NeMo/RL /opt/nvidia_slm/vendor/RL || true
+  sudo -u ubuntu git clone --depth 1 --branch "${nemo_rl_ref}" \
+    https://github.com/NVIDIA-NeMo/RL /opt/nvidia_slm/vendor/RL || true
 fi
 
-# --- 重いイメージをバックグラウンドで事前pull（起動をブロックしない） ---------
+# --- 重いイメージをバックグラウンドで事前pull（起動をブロックしない・タグ固定） ---
 # vLLM(base測定/serve-nemotron用)。NGCのNeMo-RLコンテナは要ログインのため手動。
-nohup docker pull vllm/vllm-openai:latest > /var/log/prefetch-vllm.log 2>&1 &
+nohup docker pull "${vllm_image}" > /var/log/prefetch-vllm.log 2>&1 &
 
 # --- 利用手順 ----------------------------------------------------------------
 cat > /opt/nvidia_slm/README.txt <<'EOF'
