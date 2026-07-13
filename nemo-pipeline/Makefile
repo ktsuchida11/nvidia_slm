@@ -4,6 +4,10 @@
 #   借りGPUホスト : dapt / sft / grpo（このリポごと持ち込み同じmakeを叩く）
 # =============================================================================
 SHELL := /bin/bash
+# DooD(Docker outside of Docker)環境ではデーモンがホスト側にあり、-v のソースは
+# ホスト側パスが必要。hostpath.mk（gitignore済・機械固有）で HOST_PWD を上書きする。
+-include hostpath.mk
+HOST_PWD ?= $(PWD)
 DATA := $(PWD)/data
 CKPT := $(PWD)/checkpoints
 RES  := $(PWD)/results
@@ -14,21 +18,21 @@ CURATOR_IMG ?= nvcr.io/nvidia/nemo-curator:latest # 〃（S1はpython:3.12-slim�
 PY_IMG      ?= python:3.12-slim                    # 閉域では nemo-tools:latest（make build-tools）に差し替え
 
 GPU := --gpus all
-RUN := docker run --rm -it --add-host=host.docker.internal:host-gateway -v $(PWD):/pipeline -v $(DATA):/data -v $(CKPT):/ckpt -v $(RES):/results
+RUN := docker run --rm -i --add-host=host.docker.internal:host-gateway -v $(HOST_PWD):/pipeline -v $(HOST_PWD)/data:/data -v $(HOST_PWD)/checkpoints:/ckpt -v $(HOST_PWD)/results:/results
 MLFLOW_URI ?= http://host.docker.internal:5000
 
 .PHONY: setup extract caption fetch curate distill distill-dry dapt sft grpo eval eval-dry guardrails guardrails-test tracking tensorboard clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
-	docker run --rm -d --name mlflow -p 127.0.0.1:5000:5000 -v $(PWD)/mlflow:/mlflow \
+	docker run --rm -d --name mlflow -p 127.0.0.1:5000:5000 -v $(HOST_PWD)/mlflow:/mlflow \
 	  ghcr.io/mlflow/mlflow:latest mlflow server \
 	  --backend-store-uri sqlite:////mlflow/mlflow.db \
 	  --artifacts-destination /mlflow/artifacts --host 0.0.0.0 --port 5000
 	@echo "MLflow UI: http://localhost:5000（外部SaaSなし・完全閉域）"
 
 tensorboard:         ## TensorBoard（サーバ不要の保険。学習ログを直接読む）
-	docker run --rm -d --name tb -p 127.0.0.1:6006:6006 -v $(CKPT):/logs \
+	docker run --rm -d --name tb -p 127.0.0.1:6006:6006 -v $(HOST_PWD)/checkpoints:/logs \
 	  tensorflow/tensorflow:latest tensorboard --logdir /logs --host 0.0.0.0
 
 setup:               ## ディレクトリ契約の作成
@@ -63,7 +67,7 @@ distill-dry:         ## S2 配管検証（API不要・数秒）
 
 # --- 実験トラッキング（クローズド網: 自前MLflow。外部送信なし） ----------------
 build-tools:         ## 閉域準備: 依存焼き込みツールイメージをbuild（オンライン環境で一度実行）
-	docker build -t nemo-tools:latest -f docker/tools.Dockerfile .
+	docker build -t nemo-tools:latest --build-arg BASE_IMAGE=$(or $(TOOLS_BASE),python:3.12-slim) -f docker/tools.Dockerfile .
 	@echo "以後: make <target> PY_IMG=nemo-tools:latest で実行時pip不要"
 
 serve-nemotron:      ## 推論配信（Nemotron-Nano-9B-v2-Japanese / vLLM）:8002。要 HF_TOKEN（gated）
@@ -78,7 +82,7 @@ serve-nemotron:      ## 推論配信（Nemotron-Nano-9B-v2-Japanese / vLLM）:80
 
 serve:               ## （任意・代替）GGUF対応モデル(Qwen等)用のllama.cpp配信。既定Nemotronは serve-nemotron を使う
 	docker run --rm -d --name llm-$(or $(ALIAS),qwen3-gen) $(GPU) \
-	  -p 127.0.0.1:$(or $(PORT),8002):8000 -v $(PWD)/models:/models:ro \
+	  -p 127.0.0.1:$(or $(PORT),8002):8000 -v $(HOST_PWD)/models:/models:ro \
 	  ghcr.io/ggml-org/llama.cpp:server-cuda \
 	  -m /models/$(or $(GGUF),qwen3-gen.gguf) --host 0.0.0.0 --port 8000 \
 	  -ngl 99 --parallel 4 -c 16384 --jinja --alias $(or $(ALIAS),qwen3-gen)
@@ -86,7 +90,7 @@ serve:               ## （任意・代替）GGUF対応モデル(Qwen等)用のl
 
 mlflow:              ## MLflowサーバ起動（:5000, データはresults/mlruns に永続化）
 	docker run --rm -d --name mlflow -p 127.0.0.1:5000:5000 \
-	  -v $(RES)/mlruns:/mlruns ghcr.io/mlflow/mlflow:latest \
+	  -v $(HOST_PWD)/results/mlruns:/mlruns ghcr.io/mlflow/mlflow:latest \
 	  mlflow server --host 0.0.0.0 --port 5000 \
 	    --backend-store-uri sqlite:////mlruns/mlflow.db --artifacts-destination /mlruns/artifacts
 	@echo "UI: http://localhost:5000  (学習側は MLFLOW_TRACKING_URI=$(MLFLOW_URI))"
@@ -118,7 +122,7 @@ eval-dry:            ## S6 配管検証（エンドポイント不要・全指�
 # --- S7 ガードレール ----------------------------------------------------------
 guardrails:          ## サーバ起動（:8100）
 	docker run --rm -d --name guardrails -p 127.0.0.1:8100:8100 \
-	  -v $(PWD)/s7_guardrails/config:/config $(PY_IMG) bash -lc \
+	  -v $(HOST_PWD)/s7_guardrails/config:/config $(PY_IMG) bash -lc \
 	  "(pip -q install nemoguardrails[all] 2>/dev/null || true) && nemoguardrails server --config /config --port 8100"
 guardrails-test:     ## 検証（公式evaluate + garak攻撃）
 	$(RUN) --add-host=host.docker.internal:host-gateway $(PY_IMG) bash -lc \
