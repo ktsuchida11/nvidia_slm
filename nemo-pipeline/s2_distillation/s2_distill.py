@@ -17,7 +17,7 @@ from prompts import SECTORS, SYN_QUERY_SYS, LABEL_SYS, ANSWER_SYS
 logging.basicConfig(level=logging.INFO, format="[distill] %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-TEACHER = "claude-sonnet-4-6"
+TEACHER = os.environ.get("TEACHER_MODEL", "claude-sonnet-4-6")
 CATEGORIES = {  # 既存テストカタログの分布に沿った層別(合計1.0)
     "single_sector_single_day": 0.30, "trend": 0.15, "comparison": 0.10,
     "summary": 0.10, "ambiguous": 0.20, "edge": 0.15,
