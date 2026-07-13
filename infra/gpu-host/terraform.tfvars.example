@@ -7,7 +7,7 @@ aws_profile = "gpu-account"    # 専用アカウントのプロファイル名
 cidr_block = "10.20.0.0/16"
 az_count   = 2
 
-enable_bastion = true
+enable_bastion = false # SSMはGPUノード直結のため通常不要
 
 gpu_instance_type    = "g6e.xlarge" # 48GB L40S。9B GRPO時は g6e.12xlarge
 gpu_use_spot         = true         # spot ~$0.6-0.9/h（中断→stop→再開）

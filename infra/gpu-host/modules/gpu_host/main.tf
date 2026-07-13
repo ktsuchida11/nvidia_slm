@@ -63,6 +63,19 @@ resource "aws_iam_role_policy_attachment" "gpu_ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+resource "aws_iam_role_policy" "gpu_session_logging" {
+  name = "${local.prefix}-gpu-session-logging"
+  role = aws_iam_role.gpu.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogGroups", "logs:DescribeLogStreams"]
+      Resource = "${var.session_log_group_arn}:*"
+    }]
+  })
+}
+
 resource "aws_iam_role_policy" "gpu_ckpt_rw" {
   name = "${local.prefix}-gpu-ckpt-rw"
   role = aws_iam_role.gpu.id

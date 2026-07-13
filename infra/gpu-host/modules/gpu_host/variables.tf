@@ -2,6 +2,7 @@ variable "project" { type = string }
 variable "environment" { type = string }
 variable "vpc_id" { type = string }
 variable "subnet_id" { type = string }
+variable "session_log_group_arn" { type = string }
 variable "associate_public_ip" {
   type    = bool
   default = false

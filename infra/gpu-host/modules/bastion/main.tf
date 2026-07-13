@@ -45,7 +45,7 @@ resource "aws_iam_role_policy" "bastion_session_logging" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogGroups", "logs:DescribeLogStreams"]
-      Resource = "${aws_cloudwatch_log_group.ssm_session.arn}:*"
+      Resource = "${var.session_log_group_arn}:*"
     }]
   })
 }

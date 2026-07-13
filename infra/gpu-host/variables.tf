@@ -39,9 +39,9 @@ variable "az_count" {
 }
 
 variable "enable_bastion" {
-  description = "SSM専用踏み台(t4g.nano)を作るか。GPUノードへはSSMで直接入れるため任意"
+  description = "SSM専用踏み台(t4g.nano)。GPUノードへはSSMで直接入れるため通常は不要（VPC内からのDBアクセス等の用途ができた時のみtrue）"
   type        = bool
-  default     = true
+  default     = false
 }
 
 # ---- GPUノード ---------------------------------------------------------------

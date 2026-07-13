@@ -11,11 +11,8 @@ variable "subnet_ids" {
 }
 variable "endpoint_sg_id" { type = string }
 variable "s3_prefix_list_id" { type = string }
+variable "session_log_group_arn" { type = string }
 variable "instance_type" {
   type    = string
   default = "t4g.nano"
-}
-variable "ssm_session_retention_in_days" {
-  type    = number
-  default = 30
 }

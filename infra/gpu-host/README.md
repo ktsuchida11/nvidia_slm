@@ -9,7 +9,8 @@ NeMoパイプラインのGPU学習用に切り出し、**専用AWSアカウン�
 |---|---|
 | network | databaseサブネット・fck-nat・VPC Flow Log を除去。NAT Gateway固定（単一）。AZハードコード→データソース動的解決 |
 | vpcendpoint | ssm/ssmmessages/ec2messages + logs に縮小（secretsmanager/ecr/ecs除去）。S3 Gatewayのリージョンハードコード修正 |
-| bastion | Aurora/ClickHouse/SecretsManager配線を除去。inbound無し・IMDSv2・カスタムSession Document・セッションログは踏襲。KMSはAWSマネージドキー |
+| bastion | **既定off**（SSMはGPUノードへ直接接続できるため踏み台不要。VPC内DBアクセス等の用途ができた時のみ`enable_bastion=true`）。有効時もAurora/ClickHouse配線は除去、inbound無し・IMDSv2は踏襲 |
+| ssm(ルート) | セッション監査ログ（Session Document+CloudWatch）をbastionモジュールから独立させ、**GPUノードへのセッションも監査対象**に |
 | gpu_host | **新規**。DLAMI(ドライバ/Docker/Toolkit済) + spot/オンデマンド切替 + ckpt退避S3 + SSM管理 |
 | backend | 初期はローカルstate（S3移行手順は providers.tf コメント） |
 
@@ -58,7 +59,7 @@ aws s3 sync s3://$CKPT_BUCKET/data/rl/ data/distilled/rl/              # GPUノ�
 | g6e.xlarge spot | ~$0.6-0.9/h | **`gpu_instance_count = 0` にして apply**（EBSごと消える。ckptはS3退避が前提） |
 | NAT Gateway | ~$0.062/h + **$0.062/GB処理** | イメージDL(数十GB/回)が多い場合 `gpu_subnet_placement="public"` でNAT課金回避 |
 | VPC Interface Endpoint ×4 | ~$0.056/h (1AZ) | 常設コスト。許容できない場合はpublic配置+endpoint削除の構成変更 |
-| bastion t4g.nano | ~$0.005/h | `enable_bastion = false` |
+| bastion t4g.nano | ~$0.005/h | 既定off（`enable_bastion = false`） |
 
 **使い終わったら**: 学習ジョブ完走→ckptをS3へ→`gpu_instance_count=0`でapply、
 完全撤収は `terraform destroy`（ckptバケットは `force_destroy=false` のため中身があると残る=安全側）。
