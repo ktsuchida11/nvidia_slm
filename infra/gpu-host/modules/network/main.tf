@@ -77,22 +77,25 @@ resource "aws_route_table_association" "private" {
   route_table_id = aws_route_table.private[count.index].id
 }
 
-# ---- NAT Gateway（単一・冗長なし。学習ジョブ用途のコスト優先） -------------
+# ---- NAT Gateway（単一・冗長なし。privateサブネットから外に出る用途がある時のみ作成。
+#      bastionはVPCエンドポイント経由でSSMに到達するためNAT不要 = GPUがprivate配置の時だけ要る） ----
 resource "aws_eip" "nat" {
+  count  = var.enable_nat ? 1 : 0
   domain = "vpc"
   tags   = { Name = "${local.prefix}-nat-eip" }
 }
 
 resource "aws_nat_gateway" "this" {
-  allocation_id = aws_eip.nat.id
+  count         = var.enable_nat ? 1 : 0
+  allocation_id = aws_eip.nat[0].id
   subnet_id     = aws_subnet.public[0].id
   tags          = { Name = "${local.prefix}-nat" }
   depends_on    = [aws_internet_gateway.this]
 }
 
 resource "aws_route" "private_nat" {
-  count                  = var.az_count
+  count                  = var.enable_nat ? var.az_count : 0
   route_table_id         = aws_route_table.private[count.index].id
   destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.this.id
+  nat_gateway_id         = aws_nat_gateway.this[0].id
 }

@@ -1,29 +1,56 @@
 #!/usr/bin/env bash
-# GPUノード初期化（DLAMI: ドライバ/Docker/Container Toolkit は導入済み）
-set -euo pipefail
+# GPUノード初期化 — 起動完了時点で学習に入れる状態まで整える
+# (DLAMI: NVIDIAドライバ / Docker / NVIDIA Container Toolkit は導入済み)
+set -uo pipefail
 exec > /var/log/user-data.log 2>&1
+echo "=== user-data start: $(date -Is) ==="
+
+# --- 基本ツール -----------------------------------------------------------
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq git tmux jq make git-lfs unzip || true
 
 # SSMエージェント（Ubuntu AMIはsnap同梱だが念のため）
 snap list amazon-ssm-agent >/dev/null 2>&1 || snap install amazon-ssm-agent --classic || true
 
-# NVIDIA Container Toolkit の Docker 連携を確認・有効化
+# Docker: ubuntuユーザで使えるように + Container Toolkit連携を確認
+usermod -aG docker ubuntu || true
 nvidia-ctk runtime configure --runtime=docker || true
 systemctl restart docker || true
 
-# 作業ディレクトリとチェックポイント退避先の案内
-mkdir -p /opt/nvidia_slm
+# --- ディレクトリ契約と環境変数 ---------------------------------------------
+install -d -o ubuntu -g ubuntu /opt/nvidia_slm
 cat > /etc/profile.d/nvidia-slm.sh <<'EOF'
 export CKPT_BUCKET="${ckpt_bucket}"
+export PIPELINE_DIR=/opt/nvidia_slm/nvidia_slm/nemo-pipeline
 EOF
 
+# --- 閉域準備: NeMo-RLを事前clone（make sft/grpo が vendor/RL を優先使用） ----
+if [ ! -d /opt/nvidia_slm/vendor/RL ]; then
+  sudo -u ubuntu git clone --depth 1 https://github.com/NVIDIA-NeMo/RL /opt/nvidia_slm/vendor/RL || true
+fi
+
+# --- 重いイメージをバックグラウンドで事前pull（起動をブロックしない） ---------
+# vLLM(base測定/serve-nemotron用)。NGCのNeMo-RLコンテナは要ログインのため手動。
+nohup docker pull vllm/vllm-openai:latest > /var/log/prefetch-vllm.log 2>&1 &
+
+# --- 利用手順 ----------------------------------------------------------------
 cat > /opt/nvidia_slm/README.txt <<'EOF'
-GPU学習ノード セットアップ手順（nemo-pipeline/docs/10-runbook.md Step 5-C）:
-  1. git clone <nvidia_slmリポ> && cd nvidia_slm/nemo-pipeline
-  2. bash remote/setup-gpu-host.sh     # 疎通確認とmake setup（DLAMIなら大半済み）
-  3. docker login nvcr.io              # user=$oauthtoken / pass=NGC APIキー
-  4. data/distilled/rl/ を配置（scp or S3経由）
-  5. make sft → make eval TAG=sft
+GPU学習ノード（初期化済み: driver/docker/toolkit/git/tmux/make, NeMo-RL clone済,
+vLLMイメージはバックグラウンド取得中 → 進捗: tail -f /var/log/prefetch-vllm.log）
+
+手順（nemo-pipeline/docs/10-runbook.md Step 5-C）:
+  1. リポ取得（どちらか）:
+     a) gh auth login && git clone https://github.com/ktsuchida11/nvidia_slm /opt/nvidia_slm/nvidia_slm
+     b) S3経由: aws s3 sync s3://$CKPT_BUCKET/repo/ /opt/nvidia_slm/nvidia_slm/
+  2. cd /opt/nvidia_slm/nvidia_slm/nemo-pipeline
+     ln -s /opt/nvidia_slm/vendor vendor   # 事前cloneしたNeMo-RLを使う
+     bash remote/setup-gpu-host.sh          # 疎通確認 + make setup
+  3. docker login nvcr.io                   # user=$oauthtoken / pass=NGC APIキー
+  4. 学習データ: aws s3 sync s3://$CKPT_BUCKET/data/rl/ data/distilled/rl/
+  5. tmux new -s train && make sft → make eval TAG=sft
 チェックポイント退避: aws s3 sync checkpoints/ s3://$CKPT_BUCKET/checkpoints/
 EOF
+chown ubuntu:ubuntu /opt/nvidia_slm/README.txt
 
-echo "user-data done"
+echo "=== user-data done: $(date -Is) ==="

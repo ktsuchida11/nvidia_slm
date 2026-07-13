@@ -101,21 +101,57 @@ resource "aws_iam_instance_profile" "gpu" {
   role = aws_iam_role.gpu.name
 }
 
-# ---- SG（inbound無し。egressはイメージ/モデルDLのため全開） -------------------
+# ---- SG（inbound無し。egressは用途ポートのみに制限） ---------------------------
 resource "aws_security_group" "gpu" {
   name        = "${local.prefix}-gpu-sg"
-  description = "GPU training node (SSM only, no inbound)"
+  description = "GPU training node (SSM only, no inbound, restricted egress)"
   vpc_id      = var.vpc_id
+  tags        = { Name = "${local.prefix}-gpu-sg" }
+}
 
-  egress {
-    description = "Pull images and models from NGC/HF/GitHub"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+resource "aws_vpc_security_group_egress_rule" "gpu_https" {
+  security_group_id = aws_security_group.gpu.id
+  description       = "HTTPS: NGC/HF/GitHub/PyPI/SSM/S3"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+  cidr_ipv4         = "0.0.0.0/0"
+}
 
-  tags = { Name = "${local.prefix}-gpu-sg" }
+resource "aws_vpc_security_group_egress_rule" "gpu_http" {
+  security_group_id = aws_security_group.gpu.id
+  description       = "HTTP: Ubuntu apt repositories"
+  from_port         = 80
+  to_port           = 80
+  ip_protocol       = "tcp"
+  cidr_ipv4         = "0.0.0.0/0"
+}
+
+resource "aws_vpc_security_group_egress_rule" "gpu_dns_udp" {
+  security_group_id = aws_security_group.gpu.id
+  description       = "DNS to VPC resolver"
+  from_port         = 53
+  to_port           = 53
+  ip_protocol       = "udp"
+  cidr_ipv4         = var.vpc_cidr
+}
+
+resource "aws_vpc_security_group_egress_rule" "gpu_dns_tcp" {
+  security_group_id = aws_security_group.gpu.id
+  description       = "DNS to VPC resolver (TCP)"
+  from_port         = 53
+  to_port           = 53
+  ip_protocol       = "tcp"
+  cidr_ipv4         = var.vpc_cidr
+}
+
+resource "aws_vpc_security_group_egress_rule" "gpu_ntp" {
+  security_group_id = aws_security_group.gpu.id
+  description       = "Amazon Time Sync"
+  from_port         = 123
+  to_port           = 123
+  ip_protocol       = "udp"
+  cidr_ipv4         = "169.254.169.123/32"
 }
 
 # ---- EC2 -----------------------------------------------------------------------

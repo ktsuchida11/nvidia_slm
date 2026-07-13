@@ -6,6 +6,9 @@ module "network" {
   environment = var.environment
   cidr_block  = var.cidr_block
   az_count    = var.az_count
+  # NATが要るのは「GPUをprivate配置」かつ「ノードが1台以上」の時だけ
+  # （bastion/VPCエンドポイントはNAT不要。gpu_instance_count=0 ならNAT時間課金も止まる）
+  enable_nat = var.gpu_subnet_placement == "private" && var.gpu_instance_count > 0
 }
 
 module "vpcendpoint" {
@@ -34,10 +37,13 @@ module "bastion" {
 }
 
 module "gpu_host" {
-  source                = "./modules/gpu_host"
+  source = "./modules/gpu_host"
+  # user_dataが起動直後に外向き通信する(apt/clone/pull)ため、NATルート整備を待つ
+  depends_on            = [module.network]
   project               = var.project
   environment           = var.environment
   vpc_id                = module.network.vpc_id
+  vpc_cidr              = module.network.vpc_cidr
   subnet_id             = var.gpu_subnet_placement == "public" ? module.network.public_subnet_ids[0] : module.network.private_subnet_ids[0]
   associate_public_ip   = var.gpu_subnet_placement == "public"
   instance_type         = var.gpu_instance_type
