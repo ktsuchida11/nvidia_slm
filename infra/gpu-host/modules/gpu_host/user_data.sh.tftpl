@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# GPUノード初期化（DLAMI: ドライバ/Docker/Container Toolkit は導入済み）
+set -euo pipefail
+exec > /var/log/user-data.log 2>&1
+
+# SSMエージェント（Ubuntu AMIはsnap同梱だが念のため）
+snap list amazon-ssm-agent >/dev/null 2>&1 || snap install amazon-ssm-agent --classic || true
+
+# NVIDIA Container Toolkit の Docker 連携を確認・有効化
+nvidia-ctk runtime configure --runtime=docker || true
+systemctl restart docker || true
+
+# 作業ディレクトリとチェックポイント退避先の案内
+mkdir -p /opt/nvidia_slm
+cat > /etc/profile.d/nvidia-slm.sh <<'EOF'
+export CKPT_BUCKET="${ckpt_bucket}"
+EOF
+
+cat > /opt/nvidia_slm/README.txt <<'EOF'
+GPU学習ノード セットアップ手順（nemo-pipeline/docs/10-runbook.md Step 5-C）:
+  1. git clone <nvidia_slmリポ> && cd nvidia_slm/nemo-pipeline
+  2. bash remote/setup-gpu-host.sh     # 疎通確認とmake setup（DLAMIなら大半済み）
+  3. docker login nvcr.io              # user=$oauthtoken / pass=NGC APIキー
+  4. data/distilled/rl/ を配置（scp or S3経由）
+  5. make sft → make eval TAG=sft
+チェックポイント退避: aws s3 sync checkpoints/ s3://$CKPT_BUCKET/checkpoints/
+EOF
+
+echo "user-data done"

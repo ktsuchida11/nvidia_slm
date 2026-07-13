@@ -19,3 +19,8 @@ checkpoints/
 mlruns/
 vendor/
 nemo-pipeline/hostpath.mk
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+infra/**/terraform.tfvars

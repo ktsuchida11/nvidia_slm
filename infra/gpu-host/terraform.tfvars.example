@@ -1,0 +1,16 @@
+# コピーして terraform.tfvars を作成（tfvars本体はコミットしない）
+project     = "nvslm"
+environment = "dev"
+region      = "ap-northeast-1" # g6e提供リージョンか事前確認（README参照）
+aws_profile = "gpu-account"    # 専用アカウントのプロファイル名
+
+cidr_block = "10.20.0.0/16"
+az_count   = 2
+
+enable_bastion = true
+
+gpu_instance_type    = "g6e.xlarge" # 48GB L40S。9B GRPO時は g6e.12xlarge
+gpu_use_spot         = true         # spot ~$0.6-0.9/h（中断→stop→再開）
+gpu_subnet_placement = "private"    # NATデータ課金を避けたい場合は "public"
+gpu_root_volume_gb   = 300
+gpu_instance_count   = 1            # 使わない期間は 0 にして apply（課金停止）
