@@ -1,26 +1,131 @@
-# S4 SFT/LoRA（NeMo Framework想定のパラメータ骨子。実キー名はコンテナ内レシピに合わせる）
-model:
-  base: nvidia/NVIDIA-Nemotron-Nano-9B-v2-Japanese   # 商用可・要HF規約同意。docs/06参照
-  peft: lora
-  lora: { r: 16, alpha: 32, dropout: 0.05 }
+# S4 SFT/LoRA — NeMo-RL examples/run_sft.py 用設定
+# キー構造は NVIDIA-NeMo/RL examples/configs/sft.yaml（2026-07時点 main）を正として作成。
+# 実行: run_sft.sh（make sft）。事前に prep_rl_data.py で data/distilled/rl/ を生成しておくこと。
+# ★実機確認事項: コンテナ版とレシピ版の整合（RL_IMG のタグ）、データパスのマウント位置。
+sft:
+  max_num_epochs: 2
+  max_num_steps: 1000
+  val_period: 50               # SFT中も検証を回す（S0の方針）。終了後は必ず make eval TAG=sft
+  val_batches: 8
+  val_global_batch_size: 16
+  val_micro_batch_size: 1
+  val_at_start: true           # 学習前のval loss=baseの位置を記録
+  val_at_end: true
+  seed: 42
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: /ckpt/sft
+  metric_name: "val:val_loss"
+  higher_is_better: false
+  keep_top_k: 2
+  save_period: 50              # spot中断前提で細かめに保存
+  save_optimizer: true
+
+policy:
+  # 既定=Nemotron-Nano-9B-v2-Japanese（gated・要HF規約同意。48GBでSFT/LoRA快適: docs/00）
+  # 4Bで先に配管検証する場合は Qwen/Qwen3-4B-Instruct-2507 等へ差し替え
+  model_name: nvidia/NVIDIA-Nemotron-Nano-9B-v2-Japanese
+  tokenizer:
+    name: ${policy.model_name}
+    chat_template: null        # モデル既定のchat templateを使う（Nemotronのreasoning作法を壊さない）
+    chat_template_kwargs: null
+  train_global_batch_size: 32
+  train_micro_batch_size: 1
+  max_total_sequence_length: 4096
+  precision: "bfloat16"
+
+  dtensor_cfg:
+    _v2: true
+    enabled: true
+    cpu_offload: false
+    sequence_parallel: false
+    activation_checkpointing: true    # 48GB安全側
+    tensor_parallel_size: 1
+    context_parallel_size: 1
+    dp_replicate_size: 1
+    custom_parallel_plan: null
+    automodel_kwargs: {}
+    lora_cfg:
+      enabled: true
+      target_modules: []
+      exclude_modules: []
+      match_all_linear: true
+      dim: 16                  # 旧sft_lora.yamlの r:16 / alpha:32 を踏襲
+      alpha: 32
+      dropout: 0.05
+      dropout_position: "post"
+      lora_A_init: "xavier"
+      use_triton: true
+
+  dynamic_batching:
+    enabled: false
+    train_mb_tokens: ${mul:${policy.max_total_sequence_length}, ${policy.train_micro_batch_size}}
+    sequence_length_round: 64
+  sequence_packing:
+    enabled: false
+    train_mb_tokens: ${mul:${policy.max_total_sequence_length}, ${policy.train_micro_batch_size}}
+    algorithm: "modified_first_fit_decreasing"
+    sequence_length_round: 64
+  make_sequence_length_divisible_by: ${policy.dtensor_cfg.tensor_parallel_size}
+  max_grad_norm: 1.0
+
+  optimizer:
+    name: "torch.optim.AdamW"
+    kwargs:
+      lr: 1.0e-4               # LoRA向け（full FTなら5e-6級へ）
+      weight_decay: 0.1
+      betas: [0.9, 0.98]
+      eps: 1e-5
+      foreach: false
+      fused: false
+
 data:
-  train: /data/distilled/train.jsonl
-  valid: /data/distilled/valid.jsonl   # held-out はここに入れない
-trainer:
-  precision: bf16
-  max_steps: 1000
-  val_check_interval: 100              # ★ SFT中も検証を回し、終了後すぐ S6 eval を実行
-  ckpt_dir: /ckpt/sft
-exp_manager:                           # NeMo Framework: MLflow/TensorBoardロガー(クローズド網対応)
-  create_tensorboard_logger: true
-  create_mlflow_logger: true
-  mlflow_logger_kwargs: { experiment_name: sft-qwen, tracking_uri: ${MLFLOW_TRACKING_URI} }
-  create_wandb_logger: false           # 外部送信は使わない
-logging:                            # NeMo Framework exp_manager（閉域構成）
-  create_tensorboard_logger: true
-  create_mlflow_logger: true        # 公式サポート（create_mlflow_logger / mlflow_logger_kwargs）
-  mlflow_logger_kwargs: { experiment_name: nemo-sft, tracking_uri: "${MLFLOW_TRACKING_URI}" }
-  create_wandb_logger: false        # クローズネットワーク方針
-notes: |
-  - 学習は借りGPU(EC2 NGC / Brev)。ローカル/Colab本流では実行しない。
-  - チェックポイントはS3/GCSへ退避（spot中断前提）。
+  add_generation_prompt: true
+  # 2タスクを別データセットとして与える（system promptが異なるため）。
+  # prep_rl_data.py の出力（プロンプトは s6_eval と同一描画）。
+  train:
+    - dataset_name: ResponseDataset
+      data_path: /data/distilled/rl/sft_analysis_train.jsonl
+      input_key: input
+      output_key: output
+      system_prompt_file: /data/distilled/rl/prompts/label_sys.txt
+    - dataset_name: ResponseDataset
+      data_path: /data/distilled/rl/sft_generation_train.jsonl
+      input_key: input
+      output_key: output
+      system_prompt_file: /data/distilled/rl/prompts/answer_sys.txt
+  validation:
+    - dataset_name: ResponseDataset
+      data_path: /data/distilled/rl/sft_analysis_valid.jsonl
+      input_key: input
+      output_key: output
+      system_prompt_file: /data/distilled/rl/prompts/label_sys.txt
+    - dataset_name: ResponseDataset
+      data_path: /data/distilled/rl/sft_generation_valid.jsonl
+      input_key: input
+      output_key: output
+      system_prompt_file: /data/distilled/rl/prompts/answer_sys.txt
+  default:
+    prompt_file: null
+
+logger:                        # クローズド網: 外部SaaSなし（W&B不使用）
+  log_dir: /results/logs/sft
+  wandb_enabled: false
+  tensorboard_enabled: true
+  mlflow_enabled: true
+  swanlab_enabled: false
+  monitor_gpus: true
+  tensorboard:
+    log_dir: /results/tb/sft
+  mlflow:
+    experiment_name: nemo-sft
+    run_name: sft-nemotron9b-lora
+    tracking_uri: ${oc.env:MLFLOW_TRACKING_URI,http://host.docker.internal:5000}
+  gpu_monitoring:
+    collection_interval: 10
+    flush_interval: 10
+
+cluster:
+  gpus_per_node: 1             # 48GB×1（Route 48GB）
+  num_nodes: 1

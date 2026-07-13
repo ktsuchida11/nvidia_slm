@@ -18,3 +18,4 @@ results/
 checkpoints/
 mlruns/
 vendor/
+nemo-pipeline/hostpath.mk

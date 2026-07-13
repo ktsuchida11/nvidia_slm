@@ -1,46 +1,167 @@
-# S5 GRPO（NeMo-RL想定の骨子。実キー名は NVIDIA-NeMo/RL examples/configs を正とする）
-policy:
-  model_name: /ckpt/sft            # SFT成果から開始（base=Nemotron-Nano-9B-v2-Japanese）
-  train_backend: dtensor           # 小規模はdtensor、9B多GPUはmegatron検討
+# S5 GRPO — NeMo-RL用設定（run_grpo_finance.py 経由で実行。報酬=finance_grounding環境）
+# キー構造は NVIDIA-NeMo/RL examples/configs/grpo_math_1B.yaml / grpo_math_8B.yaml
+# （2026-07時点 main）を正として作成。48GB×1（Route 48GB）を既定プロファイルとする。
+# ★実機確認事項:
+#  - RL_IMG のタグ（NGCカタログで確認。Nemotron系は nemo-rl:v0.4.0.nemotron_3_nano 系列あり）
+#  - data.default.processor（ResponseDataset+ground_truth の既定処理でmetadataに
+#    ground_truth が渡ること。渡らなければ math_hf_data_processor 相当を指定）
+#  - Nemotron-H(Mamba)を直接GRPOする場合は vLLM>=0.17 または
+#    grpo.seq_logprob_error_threshold: 2 を設定（NeMo-RL docs/guides/nemotron-3-nano.md）
 grpo:
-  num_generations: 8               # group size（VRAMと相談）
-  max_new_tokens: 512              # 生成タスクは長め、解析タスクは256で十分
-reward:
-  module: /scripts/reward.py       # 検証可能報酬（評価セットとは分離）
-  fn: reward_generation
+  num_prompts_per_step: 16
+  num_generations_per_prompt: 8    # 旧 num_generations:8 相当。OOM時の絞りノブ①: 8→4
+  max_rollout_turns: 1
+  max_num_epochs: 1
+  max_num_steps: 500
+  normalize_rewards: true
+  use_leave_one_out_baseline: true
+  val_period: 10
+  val_at_start: false
+  max_val_samples: 64
+  val_batch_size: 64
+  seed: 42
+
+loss_fn:
+  reference_policy_kl_penalty: 0.01
+  reference_policy_kl_type: "k3"
+  ratio_clip_min: 0.2
+  ratio_clip_max: 0.2
+  token_level_loss: true
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: /ckpt/grpo
+  metric_name: "train:reward"      # 検証可能報酬の平均を追う（val環境も同一報酬）
+  higher_is_better: true
+  keep_top_k: 2
+  save_period: 20                  # spot中断前提
+  model_save_format: "safetensors"
+  save_optimizer: true
+
+policy:
+  # SFT成果から開始。まず4Bで配管・報酬検証→9Bへ（docs/00の順）。
+  # 9B GRPOは48GB単体では不足（~50-60GB）→ Unslothルート or L40S×4（docs/00）。
+  model_name: /ckpt/sft            # または HF id（4B検証時: Qwen/Qwen3-4B-Instruct-2507 等）
+  tokenizer:
+    name: ${policy.model_name}
+    chat_template_kwargs: null
+  train_global_batch_size: 128
+  train_micro_batch_size: 1
+  generation_batch_size: 16
+  logprob_batch_size: ${policy.train_micro_batch_size}
+  max_total_sequence_length: 2048  # 絞りノブ③: 4096→2048 適用済み（48GBプロファイル）
+  precision: "bfloat16"
+  max_grad_norm: 1.0
+
+  dtensor_cfg:
+    _v2: true
+    enabled: true
+    cpu_offload: false
+    sequence_parallel: false
+    activation_checkpointing: true # 絞りノブ④
+    tensor_parallel_size: 1
+    context_parallel_size: 1
+    custom_parallel_plan: null
+    automodel_kwargs: {}
+    lora_cfg:                      # 絞りノブ④': LoRA必須（48GB）
+      enabled: true
+      target_modules: []
+      exclude_modules: []
+      match_all_linear: true
+      dim: 16
+      alpha: 32
+      dropout: 0.0
+      dropout_position: "post"
+      lora_A_init: "xavier"
+      use_triton: true
+
+  dynamic_batching:
+    enabled: false
+    train_mb_tokens: ${mul:${policy.max_total_sequence_length}, ${policy.train_micro_batch_size}}
+    logprob_mb_tokens: ${mul:${policy.max_total_sequence_length}, ${policy.logprob_batch_size}}
+    sequence_length_round: 64
+  sequence_packing:
+    enabled: true
+    train_mb_tokens: ${mul:${policy.max_total_sequence_length}, ${policy.train_micro_batch_size}}
+    logprob_mb_tokens: ${mul:${policy.max_total_sequence_length}, ${policy.logprob_batch_size}}
+    algorithm: "modified_first_fit_decreasing"
+    sequence_length_round: 64
+  make_sequence_length_divisible_by: ${policy.dtensor_cfg.tensor_parallel_size}
+
+  optimizer:
+    name: "torch.optim.AdamW"
+    kwargs:
+      lr: 3.0e-7
+      weight_decay: 0.01
+      betas: [0.9, 0.999]
+      eps: 1e-8
+  scheduler:
+    - name: "torch.optim.lr_scheduler.LinearLR"
+      kwargs: { start_factor: 0.1, end_factor: 1.0, total_iters: 13 }
+    - name: "torch.optim.lr_scheduler.ConstantLR"
+      kwargs: { factor: 1.0, total_iters: 10000000000 }
+    - milestones: [13]
+
+  generation:
+    backend: "vllm"
+    max_new_tokens: 512            # 生成タスク向け。絞りノブ②: 512→384
+    temperature: 1.0
+    top_p: 1.0
+    top_k: null
+    stop_token_ids: null
+    stop_strings: null
+    vllm_cfg:
+      async_engine: false
+      precision: ${policy.precision}
+      tensor_parallel_size: 1
+      pipeline_parallel_size: 1
+      gpu_memory_utilization: 0.4  # 絞りノブ⑤適用済み（学習系と同居のため低め）
+      max_model_len: ${policy.max_total_sequence_length}
+      enforce_eager: false
+    vllm_kwargs: {}
+    colocated:
+      enabled: true                # 単一GPU: 生成と学習が同居
+      resources: { gpus_per_node: null, num_nodes: null }
+
 data:
-  train: /data/distilled/train.jsonl
-cluster:
-  gpus: 4                          # 9B想定=4×L40S(g6e.12xlarge) or 2×A100
-# --- 64GBローカルGPU用プロファイル(Route L, 9Bギリギリ) ---------------------
-# cluster: { gpus: 1 }
-# grpo:    { num_generations: 4, max_new_tokens: 384 }   # 絞りノブ1,2
-# policy:  { max_seq_len: 2048 }                          # 絞りノブ3（キー名は実レシピ準拠）
-# generation: { gpu_memory_utilization: 0.4 }             # 絞りノブ5（colocated時）
-# LoRA必須+activation checkpointing。OOMが続けばUnslothルート or 借りGPUへ（README参照）
-logger:                            # NeMo-RL公式対応（閉域: 外部SaaSなし）
-  wandb_enabled: false             # クローズネットワーク方針によりW&Bは使わない
-  tensorboard_enabled: true        # 保険（/ckpt配下に出力→make tensorboard で閲覧）
+  max_input_seq_length: ${policy.max_total_sequence_length}
+  shuffle: true
+  num_workers: 1
+  train:
+    # prep_rl_data.py の出力。ground_truth に {"chunk_labels": [...]} のJSON文字列
+    dataset_name: ResponseDataset
+    data_path: /data/distilled/rl/grpo_generation_train.jsonl
+    input_key: input
+    split_validation_size: 0.05    # train内から5%をGRPO用valに（heldoutは使わない・不可侵）
+    seed: ${grpo.seed}
+  validation: null
+  default:
+    prompt_file: null
+    system_prompt_file: /data/distilled/rl/prompts/answer_sys.txt
+    env_name: "finance_grounding"  # run_grpo_finance.py が register_env する
+
+env:
+  finance_grounding:
+    num_workers: 2                 # 報酬は正規表現のみで軽量
+
+logger:                            # クローズド網: 外部SaaSなし（W&B不使用）
+  log_dir: /results/logs/grpo
+  num_val_samples_to_print: 2
+  wandb_enabled: false
+  tensorboard_enabled: true        # 保険（make tensorboard で閲覧）
   mlflow_enabled: true             # 主役（セルフホストMLflow）
-  tensorboard: { log_dir: /ckpt/tb }
+  swanlab_enabled: false
+  monitor_gpus: true
+  tensorboard:
+    log_dir: /results/tb/grpo
   mlflow:
     experiment_name: nemo-rl-grpo
-    run_name: grpo-qwen
-    tracking_uri: ${MLFLOW_TRACKING_URI}   # make grpo が注入（既定 http://host.docker.internal:5000）
-checkpoint:
-  dir: /ckpt/grpo
-  save_interval: 200               # spot中断前提
-logger:                            # ★クローズド網: 外部送信ロガーは使わない
-  wandb_enabled: false
-  tensorboard_enabled: true        # ファイルベース(完全オフライン)。/results/tb を tensorboard --logdir で閲覧
-  mlflow_enabled: true             # NeMo-RL公式対応。自前MLflowサーバ(:5000)へ
-  tensorboard: { log_dir: /results/tb }
-  mlflow:
-    experiment_name: grpo-qwen
-    run_name: grpo-9b
-    tracking_uri: ${MLFLOW_TRACKING_URI}   # make が注入(既定 http://host.docker.internal:5000)
-notes: |
-  - ★Nemotron-H(Mambaハイブリッド)のGRPO対応はNeMo-RLレシピで要確認（docs/06）。未対応ならSFT+Nemotron公式データで代替。
-  - 報酬はreasoningトレースを除いた最終回答に対して採点する前処理を入れる。
-  - まず4B・1GPUで報酬と配管を検証してから9Bへ。
-  - 学習中ヘルスチェック: 空応答/反復(reward.pyのpenalty発火率)を監視。
+    run_name: grpo-finance
+    tracking_uri: ${oc.env:MLFLOW_TRACKING_URI,http://host.docker.internal:5000}
+  gpu_monitoring:
+    collection_interval: 10
+    flush_interval: 10
+
+cluster:
+  gpus_per_node: 1                 # 48GB×1。9BをL40S×4で回す場合は4に
+  num_nodes: 1

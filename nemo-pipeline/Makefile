@@ -4,31 +4,38 @@
 #   借りGPUホスト : dapt / sft / grpo（このリポごと持ち込み同じmakeを叩く）
 # =============================================================================
 SHELL := /bin/bash
+# DooD(Docker outside of Docker)環境ではデーモンがホスト側にあり、-v のソースは
+# ホスト側パスが必要。hostpath.mk（gitignore済・機械固有）で HOST_PWD を上書きする。
+-include hostpath.mk
+HOST_PWD ?= $(PWD)
 DATA := $(PWD)/data
 CKPT := $(PWD)/checkpoints
 RES  := $(PWD)/results
 TAG  ?= model          # eval用: base / sft / grpo など
 
-NEMO_IMG    ?= nvcr.io/nvidia/nemo:25.04          # 要NGCログイン。タグは導入時に最新確認
+NEMO_IMG    ?= nvcr.io/nvidia/nemo:25.04          # 要NGCログイン。タグは導入時に最新確認（S3 DAPT用）
+RL_IMG      ?= nvcr.io/nvidia/nemo-rl:latest      # S4/S5用（NeMo-RL統一）。タグはNGCカタログで実機確認
 CURATOR_IMG ?= nvcr.io/nvidia/nemo-curator:latest # 〃（S1はpython:3.12-slimでも可）
 PY_IMG      ?= python:3.12-slim                    # 閉域では nemo-tools:latest（make build-tools）に差し替え
 
 GPU := --gpus all
-RUN := docker run --rm -it --add-host=host.docker.internal:host-gateway -v $(PWD):/pipeline -v $(DATA):/data -v $(CKPT):/ckpt -v $(RES):/results
-MLFLOW_URI ?= http://host.docker.internal:5000
+RUN := docker run --rm -i --add-host=host.docker.internal:host-gateway -v $(HOST_PWD):/pipeline -v $(HOST_PWD)/data:/data -v $(HOST_PWD)/checkpoints:/ckpt -v $(HOST_PWD)/results:/results
+MLFLOW_PORT ?= 5000
+MLFLOW_IMG  ?= ghcr.io/mlflow/mlflow:latest       # 壊れている場合は nemo-tools:latest（mlflow同梱）
+MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 
 .PHONY: setup extract caption fetch curate distill distill-dry dapt sft grpo eval eval-dry guardrails guardrails-test tracking tensorboard clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
-	docker run --rm -d --name mlflow -p 127.0.0.1:5000:5000 -v $(PWD)/mlflow:/mlflow \
-	  ghcr.io/mlflow/mlflow:latest mlflow server \
+	docker run --rm -d --name mlflow -p 127.0.0.1:$(MLFLOW_PORT):5000 -v $(HOST_PWD)/mlflow:/mlflow \
+	  $(MLFLOW_IMG) mlflow server \
 	  --backend-store-uri sqlite:////mlflow/mlflow.db \
 	  --artifacts-destination /mlflow/artifacts --host 0.0.0.0 --port 5000
-	@echo "MLflow UI: http://localhost:5000（外部SaaSなし・完全閉域）"
+	@echo "MLflow UI: http://localhost:$(MLFLOW_PORT)（外部SaaSなし・完全閉域）"
 
 tensorboard:         ## TensorBoard（サーバ不要の保険。学習ログを直接読む）
-	docker run --rm -d --name tb -p 127.0.0.1:6006:6006 -v $(CKPT):/logs \
+	docker run --rm -d --name tb -p 127.0.0.1:6006:6006 -v $(HOST_PWD)/checkpoints:/logs \
 	  tensorflow/tensorflow:latest tensorboard --logdir /logs --host 0.0.0.0
 
 setup:               ## ディレクトリ契約の作成
@@ -63,7 +70,7 @@ distill-dry:         ## S2 配管検証（API不要・数秒）
 
 # --- 実験トラッキング（クローズド網: 自前MLflow。外部送信なし） ----------------
 build-tools:         ## 閉域準備: 依存焼き込みツールイメージをbuild（オンライン環境で一度実行）
-	docker build -t nemo-tools:latest -f docker/tools.Dockerfile .
+	docker build -t nemo-tools:latest --build-arg BASE_IMAGE=$(or $(TOOLS_BASE),python:3.12-slim) -f docker/tools.Dockerfile .
 	@echo "以後: make <target> PY_IMG=nemo-tools:latest で実行時pip不要"
 
 serve-nemotron:      ## 推論配信（Nemotron-Nano-9B-v2-Japanese / vLLM）:8002。要 HF_TOKEN（gated）
@@ -78,18 +85,18 @@ serve-nemotron:      ## 推論配信（Nemotron-Nano-9B-v2-Japanese / vLLM）:80
 
 serve:               ## （任意・代替）GGUF対応モデル(Qwen等)用のllama.cpp配信。既定Nemotronは serve-nemotron を使う
 	docker run --rm -d --name llm-$(or $(ALIAS),qwen3-gen) $(GPU) \
-	  -p 127.0.0.1:$(or $(PORT),8002):8000 -v $(PWD)/models:/models:ro \
+	  -p 127.0.0.1:$(or $(PORT),8002):8000 -v $(HOST_PWD)/models:/models:ro \
 	  ghcr.io/ggml-org/llama.cpp:server-cuda \
 	  -m /models/$(or $(GGUF),qwen3-gen.gguf) --host 0.0.0.0 --port 8000 \
 	  -ngl 99 --parallel 4 -c 16384 --jinja --alias $(or $(ALIAS),qwen3-gen)
 	@echo "OPENAI_BASE_URL=http://localhost:$(or $(PORT),8002)/v1 で make eval へ"
 
 mlflow:              ## MLflowサーバ起動（:5000, データはresults/mlruns に永続化）
-	docker run --rm -d --name mlflow -p 127.0.0.1:5000:5000 \
-	  -v $(RES)/mlruns:/mlruns ghcr.io/mlflow/mlflow:latest \
+	docker run --rm -d --name mlflow -p 127.0.0.1:$(MLFLOW_PORT):5000 \
+	  -v $(HOST_PWD)/results/mlruns:/mlruns $(MLFLOW_IMG) \
 	  mlflow server --host 0.0.0.0 --port 5000 \
 	    --backend-store-uri sqlite:////mlruns/mlflow.db --artifacts-destination /mlruns/artifacts
-	@echo "UI: http://localhost:5000  (学習側は MLFLOW_TRACKING_URI=$(MLFLOW_URI))"
+	@echo "UI: http://localhost:$(MLFLOW_PORT)  (学習側は MLFLOW_TRACKING_URI=$(MLFLOW_URI))"
 
 # --- 学習（ローカル64GB or 借りGPU。K8s不要、Dockerのみ） ---------------------
 MLFLOW_URI ?= http://host.docker.internal:5000
@@ -97,13 +104,16 @@ TRACK := -e MLFLOW_TRACKING_URI=$(MLFLOW_URI) --add-host=host.docker.internal:ho
 
 dapt:                ## S3 継続事前学習（任意）
 	$(RUN) $(GPU) $(TRACK) --shm-size=16g $(NEMO_IMG) bash /pipeline/s3_pretraining/run_dapt.sh
-sft:                 ## S4 SFT/LoRA
-	$(RUN) $(GPU) $(TRACK) --shm-size=16g $(NEMO_IMG) bash /pipeline/s4_sft/run_sft.sh
-grpo:                ## S5 GRPO（NeMo-RL。Nemotronはgrpo-nanov3/qwen3.5-9bレシピをbaseに。単一64GBはDTensor+LoRA。OOM時 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64）
-	$(RUN) $(GPU) $(TRACK) --shm-size=32g $(NEMO_IMG) bash -lc \
+prep-rl:             ## S4/S5用データ変換（distilled → NeMo-RL ResponseDataset形式。CPUで可）
+	$(RUN) $(PY_IMG) python /pipeline/s5_rl/prep_rl_data.py --in /data/distilled --out /data/distilled/rl
+sft:                 ## S4 SFT/LoRA（NeMo-RL: examples/run_sft.py + s4_sft/sft_lora.yaml）
+	$(RUN) $(GPU) $(TRACK) --shm-size=16g $(RL_IMG) bash /pipeline/s4_sft/run_sft.sh
+grpo:                ## S5 GRPO（NeMo-RL + カスタム報酬環境 finance_grounding。OOM時 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64）
+	$(RUN) $(GPU) $(TRACK) --shm-size=32g -e PIPELINE_DIR=/pipeline $(RL_IMG) bash -lc \
 	  "if [ -d /pipeline/vendor/RL ]; then cd /pipeline/vendor/RL; \
 	   else git clone --depth 1 https://github.com/NVIDIA-NeMo/RL /rl && cd /rl; fi && \
-	   uv run examples/run_grpo.py --config /pipeline/s5_rl/grpo_qwen.yaml"
+	   PYTHONPATH=/pipeline/s5_rl:$$PYTHONPATH \
+	   uv run /pipeline/s5_rl/run_grpo_finance.py --config /pipeline/s5_rl/grpo_qwen.yaml"
 vendor-rl:           ## 閉域準備: NeMo-RLをリポ内に取り込み（--recursiveでsubmodule込み・オンライン環境で一度）
 	git clone --depth 1 --recursive https://github.com/NVIDIA-NeMo/RL vendor/RL
 
@@ -116,15 +126,17 @@ eval-dry:            ## S6 配管検証（エンドポイント不要・全指�
 	  python /pipeline/s6_evaluation/s6_eval.py --config /pipeline/s6_evaluation/eval.yaml --mode dry --tag dry"
 
 # --- S7 ガードレール ----------------------------------------------------------
-guardrails:          ## サーバ起動（:8100）
-	docker run --rm -d --name guardrails -p 127.0.0.1:8100:8100 \
-	  -v $(PWD)/s7_guardrails/config:/config $(PY_IMG) bash -lc \
+GUARD_PORT ?= 8100
+guardrails:          ## サーバ起動（既定:8100。衝突時は GUARD_PORT で変更）
+	docker run --rm -d --name guardrails -p 127.0.0.1:$(GUARD_PORT):8100 \
+	  -v $(HOST_PWD)/s7_guardrails/config:/config $(PY_IMG) bash -lc \
 	  "(pip -q install nemoguardrails[all] 2>/dev/null || true) && nemoguardrails server --config /config --port 8100"
-guardrails-test:     ## 検証（公式evaluate + garak攻撃）
+guardrails-test:     ## 検証（公式evaluate + garak攻撃。GUARD_PORTをgarak設定に反映）
 	$(RUN) --add-host=host.docker.internal:host-gateway $(PY_IMG) bash -lc \
 	  "(pip -q install nemoguardrails[all] garak 2>/dev/null || true) && \
+	   sed 's/:8100/:$(GUARD_PORT)/' /pipeline/s7_guardrails/garak_rest.json > /tmp/garak_rest.json && \
 	   nemoguardrails evaluate moderation --config /pipeline/s7_guardrails/config && \
-	   python -m garak --model_type rest --generator_option_file /pipeline/s7_guardrails/garak_rest.json \
+	   python -m garak --model_type rest --generator_option_file /tmp/garak_rest.json \
 	     --probes promptinject --report_prefix /results/garak"
 
 clean:
