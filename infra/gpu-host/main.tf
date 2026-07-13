@@ -6,9 +6,9 @@ module "network" {
   environment = var.environment
   cidr_block  = var.cidr_block
   az_count    = var.az_count
-  # NATが要るのはGPUをprivate配置して外向き通信させる時だけ
-  # （bastion/VPCエンドポイントはNAT不要。public配置ならIGW直で$45/月+データ課金を節約）
-  enable_nat = var.gpu_subnet_placement == "private"
+  # NATが要るのは「GPUをprivate配置」かつ「ノードが1台以上」の時だけ
+  # （bastion/VPCエンドポイントはNAT不要。gpu_instance_count=0 ならNAT時間課金も止まる）
+  enable_nat = var.gpu_subnet_placement == "private" && var.gpu_instance_count > 0
 }
 
 module "vpcendpoint" {
@@ -37,7 +37,9 @@ module "bastion" {
 }
 
 module "gpu_host" {
-  source                = "./modules/gpu_host"
+  source = "./modules/gpu_host"
+  # user_dataが起動直後に外向き通信する(apt/clone/pull)ため、NATルート整備を待つ
+  depends_on            = [module.network]
   project               = var.project
   environment           = var.environment
   vpc_id                = module.network.vpc_id

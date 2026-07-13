@@ -57,7 +57,7 @@ aws s3 sync s3://$CKPT_BUCKET/data/rl/ data/distilled/rl/              # GPUノ�
 | リソース | 目安 | 止め方 |
 |---|---|---|
 | g6e.xlarge spot | ~$0.6-0.9/h | **`gpu_instance_count = 0` にして apply**（EBSごと消える。ckptはS3退避が前提） |
-| NAT Gateway | ~$0.062/h + **$0.062/GB処理** | イメージDL(数十GB/回)が多い場合 `gpu_subnet_placement="public"` でNAT課金回避 |
+| NAT Gateway | ~$0.062/h + **$0.062/GB処理** | **`gpu_instance_count=0` でNATも自動削除**（GPU停止中は課金ゼロ）。常時回避は `gpu_subnet_placement="public"` |
 | VPC Interface Endpoint ×4 | ~$0.056/h (1AZ) | 常設コスト。許容できない場合はpublic配置+endpoint削除の構成変更 |
 | bastion t4g.nano | ~$0.005/h | 既定off（`enable_bastion = false`） |
 
