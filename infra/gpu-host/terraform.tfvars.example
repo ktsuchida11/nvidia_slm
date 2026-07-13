@@ -11,6 +11,6 @@ enable_bastion = false # SSMはGPUノード直結のため通常不要
 
 gpu_instance_type    = "g6e.xlarge" # 48GB L40S。9B GRPO時は g6e.12xlarge
 gpu_use_spot         = true         # spot ~$0.6-0.9/h（中断→stop→再開）
-gpu_subnet_placement = "private"    # NATデータ課金を避けたい場合は "public"
+gpu_subnet_placement = "private"    # 推奨（閉域配置。NAT GW ~$45/月+データ$0.062/GBは安全性の対価）
 gpu_root_volume_gb   = 300
 gpu_instance_count   = 1            # 使わない期間は 0 にして apply（課金停止）

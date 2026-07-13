@@ -41,6 +41,7 @@ module "gpu_host" {
   project               = var.project
   environment           = var.environment
   vpc_id                = module.network.vpc_id
+  vpc_cidr              = module.network.vpc_cidr
   subnet_id             = var.gpu_subnet_placement == "public" ? module.network.public_subnet_ids[0] : module.network.private_subnet_ids[0]
   associate_public_ip   = var.gpu_subnet_placement == "public"
   instance_type         = var.gpu_instance_type

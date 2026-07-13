@@ -66,7 +66,11 @@ aws s3 sync s3://$CKPT_BUCKET/data/rl/ data/distilled/rl/              # GPUノ�
 
 ## セキュリティ
 
+- **GPUノードはprivateサブネット配置が既定**（外向きはNAT GW経由・パブリックIPなし）
 - 全EC2: inboundルールなし（SSM経由のみ）・IMDSv2必須・EBS暗号化
+- **egressはポート制限**: 443(HTTPS) / 80(apt) / 53(DNSはVPCリゾルバのみ) / 123(Amazon Time Sync) のみ許可
 - SSMセッションはCloudWatch Logsに監査ログ（保持30日、mra踏襲）
-- GPUノードのegressは全開（NGC/HF/GitHubからの取得のため）。閉域要件が強い場合は
-  mra_terraform 本体の vpcendpoint(ecr等)+ドメイン制限付きプロキシの構成を検討
+- 起動時に環境構築完了（user_data）: 基本ツール・NeMo-RL事前clone・vLLMイメージのバックグラウンド取得。
+  手順は ノード上の `/opt/nvidia_slm/README.txt`
+- さらに強い出口統制（ドメイン許可リスト）が必要な場合は mra_terraform 本体の
+  vpcendpoint(ecr等) + プロキシ構成 or 教材 docs/07(OpenShell) を検討
