@@ -7,4 +7,5 @@ FROM ${BASE_IMAGE}
 RUN pip install --no-cache-dir \
       anthropic pyyaml datasets huggingface_hub \
       "nemoguardrails[all]" garak \
-      pypdf python-pptx python-docx
+      pypdf python-pptx python-docx \
+      mlflow

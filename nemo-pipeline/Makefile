@@ -19,17 +19,19 @@ PY_IMG      ?= python:3.12-slim                    # 閉域では nemo-tools:lat
 
 GPU := --gpus all
 RUN := docker run --rm -i --add-host=host.docker.internal:host-gateway -v $(HOST_PWD):/pipeline -v $(HOST_PWD)/data:/data -v $(HOST_PWD)/checkpoints:/ckpt -v $(HOST_PWD)/results:/results
-MLFLOW_URI ?= http://host.docker.internal:5000
+MLFLOW_PORT ?= 5000
+MLFLOW_IMG  ?= ghcr.io/mlflow/mlflow:latest       # 壊れている場合は nemo-tools:latest（mlflow同梱）
+MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 
 .PHONY: setup extract caption fetch curate distill distill-dry dapt sft grpo eval eval-dry guardrails guardrails-test tracking tensorboard clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
-	docker run --rm -d --name mlflow -p 127.0.0.1:5000:5000 -v $(HOST_PWD)/mlflow:/mlflow \
-	  ghcr.io/mlflow/mlflow:latest mlflow server \
+	docker run --rm -d --name mlflow -p 127.0.0.1:$(MLFLOW_PORT):5000 -v $(HOST_PWD)/mlflow:/mlflow \
+	  $(MLFLOW_IMG) mlflow server \
 	  --backend-store-uri sqlite:////mlflow/mlflow.db \
 	  --artifacts-destination /mlflow/artifacts --host 0.0.0.0 --port 5000
-	@echo "MLflow UI: http://localhost:5000（外部SaaSなし・完全閉域）"
+	@echo "MLflow UI: http://localhost:$(MLFLOW_PORT)（外部SaaSなし・完全閉域）"
 
 tensorboard:         ## TensorBoard（サーバ不要の保険。学習ログを直接読む）
 	docker run --rm -d --name tb -p 127.0.0.1:6006:6006 -v $(HOST_PWD)/checkpoints:/logs \
@@ -89,11 +91,11 @@ serve:               ## （任意・代替）GGUF対応モデル(Qwen等)用のl
 	@echo "OPENAI_BASE_URL=http://localhost:$(or $(PORT),8002)/v1 で make eval へ"
 
 mlflow:              ## MLflowサーバ起動（:5000, データはresults/mlruns に永続化）
-	docker run --rm -d --name mlflow -p 127.0.0.1:5000:5000 \
-	  -v $(HOST_PWD)/results/mlruns:/mlruns ghcr.io/mlflow/mlflow:latest \
+	docker run --rm -d --name mlflow -p 127.0.0.1:$(MLFLOW_PORT):5000 \
+	  -v $(HOST_PWD)/results/mlruns:/mlruns $(MLFLOW_IMG) \
 	  mlflow server --host 0.0.0.0 --port 5000 \
 	    --backend-store-uri sqlite:////mlruns/mlflow.db --artifacts-destination /mlruns/artifacts
-	@echo "UI: http://localhost:5000  (学習側は MLFLOW_TRACKING_URI=$(MLFLOW_URI))"
+	@echo "UI: http://localhost:$(MLFLOW_PORT)  (学習側は MLFLOW_TRACKING_URI=$(MLFLOW_URI))"
 
 # --- 学習（ローカル64GB or 借りGPU。K8s不要、Dockerのみ） ---------------------
 MLFLOW_URI ?= http://host.docker.internal:5000
