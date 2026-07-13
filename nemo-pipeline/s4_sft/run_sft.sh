@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
-# S4 SFT/LoRA — NGCのNeMo Frameworkコンテナ内で実行（借りGPU）。
-# NeMo Framework の finetuning(SFT/PEFT) レシピに sft_lora.yaml の値を反映して実行する。
-# 軽量代替: Unsloth(Colab)でも同じ train.jsonl を使える（両路線を同一held-outで比較可能）。
+# S4 SFT/LoRA — NeMo-RL(examples/run_sft.py) で実行（S5 GRPOとコンテナ・設定様式を統一）。
+# make sft から NeMo-RL コンテナ（Makefile: RL_IMG）内で呼ばれる。
+# 前提: prep_rl_data.py 実行済み（/data/distilled/rl/ が存在）。
 set -euo pipefail
-echo "[S4] 実行例(要調整): コンテナ内で公式finetuneレシピに --config /pipeline/s4_sft/sft_lora.yaml を反映"
-echo "[S4] 完了後は必ず: make eval TAG=sft  （base との差分を確認してからS5へ）"
-exit 1
+
+echo "[S4] preflight"
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || { echo "GPUなし"; exit 1; }
+test -f /data/distilled/rl/sft_analysis_train.jsonl || {
+  echo "[S4] 学習データ未生成。先に: python /pipeline/s5_rl/prep_rl_data.py --in /data/distilled --out /data/distilled/rl"; exit 1; }
+
+# NeMo-RL リポ（閉域: vendor/RL を優先、無ければclone）
+if [ -d /pipeline/vendor/RL ]; then RL=/pipeline/vendor/RL;
+else RL=/rl; [ -d $RL ] || git clone --depth 1 https://github.com/NVIDIA-NeMo/RL $RL; fi
+cd "$RL"
+
+echo "[S4] SFT開始（LoRA, config=/pipeline/s4_sft/sft_lora.yaml）"
+uv run examples/run_sft.py --config /pipeline/s4_sft/sft_lora.yaml
+
+echo "[S4] 完了。次: make eval TAG=sft （base比を確認してからS5へ）"

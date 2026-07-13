@@ -30,10 +30,12 @@
 ## make ができないこと（＝人手チェックリスト）
 1. ホストOS準備: Docker / NVIDIA Container Toolkit / ドライバ（docs/00-environment.md）
 2. アカウント・キー: NGCログイン（user=`$oauthtoken`）/ ANTHROPIC_API_KEY / HFトークン
-3. **S3/S4の学習コマンド確定**: run_dapt.sh / run_sft.sh はNeMo Framework公式レシピを確認して有効化する
-   （誤実行防止のため意図的に exit 1 のスタブ。ここが唯一の"実装持ち越し"点）
-4. **S5設定キーの整合**: grpo_qwen.yaml は骨子。NeMo-RLの examples/configs を正として鍵名を合わせる。
-   独自報酬(common/reward.py)の組み込み方もRLのカスタム環境ドキュメントに従う
+3. **S3の学習コマンド確定**: run_dapt.sh はNeMo Framework公式レシピを確認して有効化する
+   （誤実行防止のため意図的に exit 1 のスタブ）。
+   ※ S4は解消済み: NeMo-RL(examples/run_sft.py)ルートで run_sft.sh 実装済み（s4_sft/README）
+4. **S5設定キーの整合**: 解消済み。grpo_qwen.yaml は NeMo-RL examples/configs 準拠（2026-07時点）、
+   独自報酬は s5_rl/finance_env.py（カスタム環境）+ run_grpo_finance.py（register_env）で組込済み。
+   残る実機確認: RL_IMG のタグ / ResponseDataset→metadata の受け渡し（s5_rl/README）
 5. モデルの取得: HFからDL（Nemotronはgated規約同意）。**量子化はvLLMのfp8（任意・オンライン/fp8ckpt）**。GGUF化は代替モデル使用時のみ
 6. GPUホストの調達（ローカル64GB or EC2/Brev）とチェックポイント退避先(S3等)の用意
 
