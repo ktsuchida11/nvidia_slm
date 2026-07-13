@@ -48,7 +48,9 @@ vLLMイメージはバックグラウンド取得中 → 進捗: tail -f /var/lo
      ln -s /opt/nvidia_slm/vendor vendor   # 事前cloneしたNeMo-RLを使う
      bash remote/setup-gpu-host.sh          # 疎通確認 + make setup
   3. docker login nvcr.io                   # user=$oauthtoken / pass=NGC APIキー
-  4. 学習データ: aws s3 sync s3://$CKPT_BUCKET/data/rl/ data/distilled/rl/
+  4. 学習データ: aws s3 sync s3://$CKPT_BUCKET/data/distilled/ data/distilled/
+     （Mac側で事前に bash remote/push-to-s3.sh を実行して push しておく。
+      rl/=SFT・GRPO用、heldout.jsonl=eval用）
   5. tmux new -s train && make sft → make eval TAG=sft
 チェックポイント退避: aws s3 sync checkpoints/ s3://$CKPT_BUCKET/checkpoints/
 EOF
