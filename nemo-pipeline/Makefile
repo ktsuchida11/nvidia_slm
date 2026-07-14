@@ -23,8 +23,10 @@ RUN := docker run --rm -i --add-host=host.docker.internal:host-gateway -v $(HOST
 MLFLOW_PORT ?= 5000
 MLFLOW_IMG  ?= ghcr.io/mlflow/mlflow:latest       # 壊れている場合は nemo-tools:latest（mlflow同梱）
 MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
+# データビューア用ポート（衝突時は hostpath.mk で上書き）
+VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch curate distill distill-dry dapt sft grpo eval eval-dry guardrails guardrails-test tracking tensorboard clean
+.PHONY: setup extract caption fetch curate distill distill-dry dapt sft grpo eval eval-dry guardrails guardrails-test tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -37,6 +39,15 @@ tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動
 tensorboard:         ## TensorBoard（サーバ不要の保険。学習ログを直接読む）
 	docker run --rm -d --name tb -p 127.0.0.1:6006:6006 -v $(HOST_PWD)/checkpoints:/logs \
 	  tensorflow/tensorflow:latest tensorboard --logdir /logs --host 0.0.0.0
+
+viewer:              ## データビューア（curated/rejected/distilled の目視QC）:8501
+	docker rm -f dataviewer 2>/dev/null || true
+	docker run --rm -d --name dataviewer -p 127.0.0.1:$(VIEWER_PORT):8501 \
+	  -v $(HOST_PWD):/pipeline:ro -v $(HOST_PWD)/data:/data:ro $(PY_IMG) bash -lc \
+	  "(pip -q install streamlit 2>/dev/null || true) && \
+	   streamlit run /pipeline/s1_curation/data_viewer.py \
+	     --server.port 8501 --server.address 0.0.0.0 --server.headless true"
+	@echo "データビューア: http://localhost:$(VIEWER_PORT)（外部送信なし・読み取り専用マウント）"
 
 setup:               ## ディレクトリ契約の作成
 	mkdir -p $(DATA)/raw $(DATA)/curated $(DATA)/distilled $(CKPT) $(RES)
@@ -140,4 +151,4 @@ guardrails-test:     ## 検証（公式evaluate + garak攻撃。GUARD_PORTをgar
 	     --probes promptinject --report_prefix /results/garak"
 
 clean:
-	docker rm -f guardrails mlflow tb 2>/dev/null || true
+	docker rm -f guardrails mlflow tb dataviewer 2>/dev/null || true
