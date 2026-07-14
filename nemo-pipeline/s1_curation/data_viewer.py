@@ -39,11 +39,22 @@ def load(rel: str) -> list[dict]:
 
 
 def record_text(rec: dict) -> str:
-    """検索対象・本文表示に使うフィールドを推定（curated=text / distilled=input）"""
+    """本文表示に使うフィールドを推定（curated=text / distilled=input）"""
     for key in ("text", "input", "prompt"):
         if isinstance(rec.get(key), str):
             return rec[key]
     return json.dumps(rec, ensure_ascii=False)
+
+
+def searchable(rec: dict) -> str:
+    """検索対象: 本文に加え教師の回答側（label/output/ground_truth）も含める
+    （例:「記載がありません」で蒸留回答の空振り件数を確認する用途）"""
+    parts = [record_text(rec)]
+    for k in ("label", "output", "ground_truth"):
+        if k in rec:
+            v = rec[k]
+            parts.append(v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))
+    return "\n".join(parts)
 
 
 files = list_jsonl()
@@ -53,7 +64,7 @@ if not files:
 
 with st.sidebar:
     sel = st.selectbox("ファイル", files)
-    query = st.text_input("本文検索（部分一致）")
+    query = st.text_input("検索（本文＋label/output/ground_truth・部分一致）")
     st.caption("列フィルタは meta の値で絞り込み")
 
 rows = load(sel)
@@ -84,7 +95,7 @@ with st.sidebar:
 view = [
     r for r in rows
     if all(str(meta_of(r).get(k)) == v for k, v in filters.items())
-    and (not query or query.lower() in record_text(r).lower())
+    and (not query or query.lower() in searchable(r).lower())
 ]
 
 st.caption(f"{sel} — {len(view)} / {len(rows)} 件表示（フィルタ適用後）")
