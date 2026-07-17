@@ -30,7 +30,7 @@ MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 # データビューア用ポート（衝突時は hostpath.mk で上書き）
 VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch curate distill distill-dry dapt sft grpo eval eval-dry guardrails guardrails-test tracking tensorboard viewer clean
+.PHONY: setup extract caption fetch curate distill distill-dry dapt sft grpo convert-sft serve-sft eval eval-dry guardrails guardrails-test tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -97,6 +97,22 @@ serve-nemotron:      ## 推論配信（Nemotron-Nano-9B-v2-Japanese / vLLM）:80
 	  --host 0.0.0.0 --port 8000 --trust-remote-code --mamba_ssm_cache_dtype float32 \
 	  --max-num-seqs 64 --max-model-len 131072
 	@echo "OPENAI_BASE_URL=http://localhost:8002/v1 で make eval（初回はDL/ロードで数分）"
+
+convert-sft:         ## SFTチェックポイント(DCP+LoRA)→HF形式へ変換・マージ（STEP=path指定可、既定は最新step）
+	$(RUN) -e HF_TOKEN -e HUGGING_FACE_HUB_TOKEN=$(HF_TOKEN) \
+	  -v $${HF_HOME:-$$HOME/.cache/huggingface}:/root/.cache/huggingface \
+	  $(RL_IMG) bash /pipeline/s4_sft/convert_sft_to_hf.sh $(STEP)
+
+serve-sft:           ## SFT済みモデル配信（vLLM）:8002。要 make convert-sft 済み
+	docker run --rm -d --name llm-gen $(GPU) --ipc=host \
+	  -p 127.0.0.1:8002:8000 -e HUGGING_FACE_HUB_TOKEN=$(HF_TOKEN) \
+	  -v $${HF_HOME:-$$HOME/.cache/huggingface}:/root/.cache/huggingface \
+	  -v $(HOST_PWD)/checkpoints:/ckpt \
+	  vllm/vllm-openai:latest \
+	  --model /ckpt/sft/hf --served-model-name nemotron-gen \
+	  --host 0.0.0.0 --port 8000 --trust-remote-code --mamba_ssm_cache_dtype float32 \
+	  --max-num-seqs 64 --max-model-len 131072
+	@echo "起動確認: docker logs -f llm-gen → 'Application startup complete' 後に make eval TAG=sft"
 
 serve:               ## （任意・代替）GGUF対応モデル(Qwen等)用のllama.cpp配信。既定Nemotronは serve-nemotron を使う
 	docker run --rm -d --name llm-$(or $(ALIAS),qwen3-gen) $(GPU) \
