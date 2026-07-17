@@ -41,6 +41,9 @@ if [ "${1:-}" = "--with-repo" ]; then
     --exclude "nemo-pipeline/checkpoints/*" \
     --exclude "nemo-pipeline/vendor/*" \
     --exclude "nemo-pipeline/hostpath.mk" \
+    --exclude "nemo-pipeline/mlflow/*" \
+    --exclude "nemo-pipeline/results/*" \
+    --exclude "*/__pycache__/*" \
     --exclude "infra/gpu-host/.terraform/*" \
     --exclude "infra/gpu-host/terraform.tfstate*" \
     --exclude "infra/gpu-host/*.tfvars"
