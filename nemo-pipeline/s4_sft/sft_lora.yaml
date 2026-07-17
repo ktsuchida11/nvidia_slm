@@ -41,7 +41,9 @@ policy:
   dtensor_cfg:
     _v2: true
     enabled: true
-    cpu_offload: false
+    # 9B + seq4096 の活性化で 44GB を超過（L40S実測: backward時OOM）。
+    # パラメータをCPU退避してGPUを活性化に明け渡す（ステップは遅くなるが数step程度）
+    cpu_offload: true
     sequence_parallel: false
     activation_checkpointing: true    # 48GB安全側
     tensor_parallel_size: 1
