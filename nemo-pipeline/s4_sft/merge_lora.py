@@ -1,12 +1,11 @@
-"""SFTのLoRAアダプタ（PEFT形式）をbaseモデルへマージし、vLLM配信可能なHF形式で保存する。
+"""SFTのLoRAアダプタ（PEFT形式）をbaseモデルの重みへマージし、vLLM配信可能なHF形式で保存する。
 
-NeMo-RL v0.6.0 (DTensor v2 + Automodel PEFT) のチェックポイントは
-  step_N/policy/weights/model/adapter_model.safetensors + adapter_config.json
-のPEFTアダプタ形式。LinearLoRA の forward は y = Wx + scale*B(Ax), scale=alpha/dim
-なので、マージは W' = W + scale*(B@A)。
+モデルはインスタンス化しない（Nemotron-Hのmodeling実装は mamba_ssm 等のGPU向け依存を
+要求するため）。baseのsafetensorsシャードを直接読み、該当テンソルにデルタを加算して
+書き出す。RAM使用もシャード単位（~5GB）で済む。
 
-キー名は実装差（peftの base_model.model. プレフィックスや .default. セグメント）を
-正規化して突き合わせ、1件でも不一致があれば失敗させる（黙って素通しさせない）。
+LinearLoRA の forward は y = Wx + scale*B(Ax), scale=alpha/dim
+→ マージ: W' = W + scale*(B@A)
 """
 from __future__ import annotations
 import argparse
@@ -14,9 +13,8 @@ import json
 import pathlib
 import shutil
 
-import torch
-from safetensors.torch import load_file
-from transformers import AutoModelForCausalLM
+from huggingface_hub import snapshot_download
+from safetensors.torch import load_file, save_file
 
 
 def normalize(key: str) -> str:
@@ -28,7 +26,7 @@ def normalize(key: str) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--adapter", required=True, help="adapter_model.safetensors のあるディレクトリ")
-    ap.add_argument("--base", required=True, help="baseモデル（HF名 or パス）")
+    ap.add_argument("--base", required=True, help="baseモデル（HF名。キャッシュ利用）")
     ap.add_argument("--tokenizer", required=True, help="チェックポイント同梱の tokenizer ディレクトリ")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
@@ -40,38 +38,52 @@ def main() -> None:
     scale = alpha / dim
     print(f"[merge] alpha={alpha} dim={dim} scale={scale}")
 
-    print(f"[merge] loading base: {a.base}（CPU, bf16。RAM~19GB使用）")
-    model = AutoModelForCausalLM.from_pretrained(
-        a.base, dtype=torch.bfloat16, trust_remote_code=True, low_cpu_mem_usage=True)
-    sd = model.state_dict()
-
+    # LoRAデルタ表: 対象weightキー -> (A, B)
     ad = load_file(str(adapter_dir / "adapter_model.safetensors"))
-    a_keys = [k for k in ad if normalize(k).endswith(".lora_A.weight")]
-    assert a_keys, f"lora_A キーが見つからない。実キー例: {list(ad)[:5]}"
-
-    merged, misses = 0, []
-    for ka in a_keys:
+    deltas = {}
+    for ka in [k for k in ad if normalize(k).endswith(".lora_A.weight")]:
         prefix = normalize(ka)[: -len(".lora_A.weight")]
         kb = next((k for k in ad if normalize(k) == f"{prefix}.lora_B.weight"), None)
-        kw = f"{prefix}.weight"
-        if kb is None or kw not in sd:
-            misses.append(prefix)
-            continue
-        W = sd[kw]
-        W.data = (W.float() + scale * (ad[kb].float() @ ad[ka].float())).to(W.dtype)
-        merged += 1
-    assert not misses, f"baseと突き合わせできないLoRAモジュール: {misses[:5]} (計{len(misses)})"
-    print(f"[merge] {merged} modules merged")
+        assert kb is not None, f"lora_B が見つからない: {prefix}"
+        deltas[f"{prefix}.weight"] = (ad[ka], ad[kb])
+    assert deltas, f"lora_A キーが見つからない。実キー例: {list(ad)[:5]}"
+    print(f"[merge] adapter modules: {len(deltas)}")
+
+    print(f"[merge] resolving base snapshot: {a.base}")
+    snap = pathlib.Path(snapshot_download(
+        a.base,
+        allow_patterns=["*.safetensors", "*.safetensors.index.json", "config.json",
+                        "generation_config.json", "*.py"]))
 
     out = pathlib.Path(a.out)
-    model.save_pretrained(out, safe_serialization=True)
-    # tokenizer はチェックポイント同梱のもの（chat_template.jinja 含む）を使用
+    out.mkdir(parents=True, exist_ok=True)
+    merged = set()
+    for shard in sorted(snap.glob("*.safetensors")):
+        tensors = load_file(str(shard))
+        hit = 0
+        for kw in list(tensors):
+            if kw in deltas:
+                A, B = deltas[kw]
+                W = tensors[kw]
+                tensors[kw] = (W.float() + scale * (B.float() @ A.float())).to(W.dtype)
+                merged.add(kw)
+                hit += 1
+        save_file(tensors, str(out / shard.name), metadata={"format": "pt"})
+        print(f"[merge] {shard.name}: {hit} tensors merged")
+
+    missing = set(deltas) - merged
+    assert not missing, (
+        f"baseに存在しないLoRA対象キー: {sorted(missing)[:5]} (計{len(missing)})。"
+        "アダプタとbaseのキー命名の突き合わせを確認すること")
+
+    # 付帯ファイル: config/index/モデル実装は base スナップショットから、
+    # tokenizer はチェックポイント同梱（chat_template.jinja 含む）を使用
+    for f in list(snap.glob("*.json")) + list(snap.glob("*.py")):
+        if f.name.endswith(".safetensors.index.json") or f.name in ("config.json", "generation_config.json") or f.suffix == ".py":
+            shutil.copy2(f, out / f.name)
     for f in pathlib.Path(a.tokenizer).iterdir():
         shutil.copy2(f, out / f.name)
-    # trust_remote_code 用のモデル実装もアダプタディレクトリから同梱（閉域ロード可能に）
-    for f in adapter_dir.glob("*.py"):
-        shutil.copy2(f, out / f.name)
-    print(f"[merge] saved -> {out}")
+    print(f"[merge] {len(merged)} modules merged / saved -> {out}")
 
 
 if __name__ == "__main__":
