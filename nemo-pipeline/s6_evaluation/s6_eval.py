@@ -21,9 +21,22 @@ def load_yaml(path: str) -> dict:
     return yaml.safe_load(open(path, encoding="utf-8"))
 
 def chat(base_url: str, model: str, system: str, user: str, max_tokens: int = 700) -> str:
-    body = json.dumps({"model": model, "max_tokens": max_tokens,
-                       "messages": [{"role": "system", "content": system},
-                                    {"role": "user", "content": user}]}).encode()
+    # EVAL_SYS_PREFIX: モデル固有の制御語をシステムプロンプト先頭に注入する
+    # （例: Nemotron-Nano-v2 は "/no_think" で思考トレースを抑止 — 思考で
+    #   max_tokens を使い切り最終回答に到達しない事象への対策）
+    prefix = os.getenv("EVAL_SYS_PREFIX", "")
+    if prefix:
+        system = f"{prefix}\n{system}"
+    payload = {"model": model, "max_tokens": max_tokens,
+               "messages": [{"role": "system", "content": system},
+                            {"role": "user", "content": user}]}
+    # EVAL_CHAT_KWARGS: vLLMのchat_template_kwargsをJSONで注入する
+    # （Nemotron-Nano-v2-Japanese は /no_think を無視するため
+    #   '{"enable_thinking": false}' が唯一有効な思考抑止手段 — 実機検証済み）
+    kwargs = os.getenv("EVAL_CHAT_KWARGS", "")
+    if kwargs:
+        payload["chat_template_kwargs"] = json.loads(kwargs)
+    body = json.dumps(payload).encode()
     req = urllib.request.Request(f"{base_url.rstrip('/')}/chat/completions", data=body,
                                  headers={"Content-Type": "application/json",
                                           "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY','sk-local')}"})
@@ -45,6 +58,10 @@ def strip_reasoning(text: str) -> str:
     import re as _re
     text = _re.sub(r"<think>.*?</think>", "", text, flags=_re.S | _re.I)
     text = _re.sub(r"<reasoning>.*?</reasoning>", "", text, flags=_re.S | _re.I)
+    # チャットテンプレートが<think>を開いた状態で生成を始めるモデル（Nemotron等）は
+    # 本文に閉じタグしか現れない。最後の</think>より前をすべて思考として落とす
+    if _re.search(r"</think>", text, _re.I):
+        text = _re.split(r"</think>", text, flags=_re.I)[-1]
     return text.strip()
 
 def extract_json(text: str) -> dict:
