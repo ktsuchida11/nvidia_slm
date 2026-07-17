@@ -15,9 +15,10 @@ TAG  ?= model          # eval用: base / sft / grpo など
 
 NEMO_IMG    ?= nvcr.io/nvidia/nemo:25.04          # 要NGCログイン。タグは導入時に最新確認（S3 DAPT用）
 # S4/S5用（NeMo-RL統一）。latestタグは存在しない（実機確認済: v0.5.0/v0.6.0/v0.7.0）。
+# v0.7.0はカタログ記載ありでもpull不可（2026-07実機確認）。pull可能な最新はv0.6.0
 # sft_lora.yaml等のキー構造が準拠するバージョンと必ず揃える（RL_REFはclone時のブランチ/タグ）
-RL_IMG      ?= nvcr.io/nvidia/nemo-rl:v0.7.0
-RL_REF      ?= v0.7.0
+RL_IMG      ?= nvcr.io/nvidia/nemo-rl:v0.6.0
+RL_REF      ?= v0.6.0
 CURATOR_IMG ?= nvcr.io/nvidia/nemo-curator:latest # 〃（S1はpython:3.12-slimでも可）
 PY_IMG      ?= python:3.12-slim                    # 閉域では nemo-tools:latest（make build-tools）に差し替え
 
