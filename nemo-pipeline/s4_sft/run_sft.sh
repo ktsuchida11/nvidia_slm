@@ -9,9 +9,11 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || { echo "GPUな
 test -f /data/distilled/rl/sft_analysis_train.jsonl || {
   echo "[S4] 学習データ未生成。先に: python /pipeline/s5_rl/prep_rl_data.py --in /data/distilled --out /data/distilled/rl"; exit 1; }
 
-# NeMo-RL リポ（閉域: vendor/RL を優先、無ければコンテナと同バージョンをclone）
-if [ -d /pipeline/vendor/RL ]; then RL=/pipeline/vendor/RL;
-else RL=/rl; [ -d $RL ] || git clone --depth 1 --branch "${RL_REF:-v0.6.0}" https://github.com/NVIDIA-NeMo/RL $RL; fi
+# NeMo-RL リポ: リリースコンテナ同梱の /opt/nemo-rl（構築済みvenv付き）を最優先。
+# 無ければ vendor/RL、最後の手段で同バージョンをclone（uvワークスペースのため--recursive必須）
+if [ -d /opt/nemo-rl/examples ]; then RL=/opt/nemo-rl;
+elif [ -d /pipeline/vendor/RL ]; then RL=/pipeline/vendor/RL;
+else RL=/rl; [ -d $RL ] || git clone --depth 1 --recursive --branch "${RL_REF:-v0.6.0}" https://github.com/NVIDIA-NeMo/RL $RL; fi
 cd "$RL"
 
 echo "[S4] SFT開始（LoRA, config=/pipeline/s4_sft/sft_lora.yaml）"

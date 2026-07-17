@@ -125,8 +125,9 @@ sft:                 ## S4 SFT/LoRA（NeMo-RL: examples/run_sft.py + s4_sft/sft_
 	$(RUN) $(GPU) $(TRACK) --shm-size=16g -e RL_REF=$(RL_REF) $(RL_IMG) bash /pipeline/s4_sft/run_sft.sh
 grpo:                ## S5 GRPO（NeMo-RL + カスタム報酬環境 finance_grounding。OOM時 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64）
 	$(RUN) $(GPU) $(TRACK) --shm-size=32g -e PIPELINE_DIR=/pipeline $(RL_IMG) bash -lc \
-	  "if [ -d /pipeline/vendor/RL ]; then cd /pipeline/vendor/RL; \
-	   else git clone --depth 1 --branch $(RL_REF) https://github.com/NVIDIA-NeMo/RL /rl && cd /rl; fi && \
+	  "if [ -d /opt/nemo-rl/examples ]; then cd /opt/nemo-rl; \
+	   elif [ -d /pipeline/vendor/RL ]; then cd /pipeline/vendor/RL; \
+	   else git clone --depth 1 --recursive --branch $(RL_REF) https://github.com/NVIDIA-NeMo/RL /rl && cd /rl; fi && \
 	   PYTHONPATH=/pipeline/s5_rl:$$PYTHONPATH \
 	   uv run /pipeline/s5_rl/run_grpo_finance.py --config /pipeline/s5_rl/grpo_qwen.yaml"
 vendor-rl:           ## 閉域準備: NeMo-RLをリポ内に取り込み（--recursiveでsubmodule込み・オンライン環境で一度）
