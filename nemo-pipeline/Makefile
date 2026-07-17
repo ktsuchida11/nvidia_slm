@@ -14,7 +14,10 @@ RES  := $(PWD)/results
 TAG  ?= model          # eval用: base / sft / grpo など
 
 NEMO_IMG    ?= nvcr.io/nvidia/nemo:25.04          # 要NGCログイン。タグは導入時に最新確認（S3 DAPT用）
-RL_IMG      ?= nvcr.io/nvidia/nemo-rl:latest      # S4/S5用（NeMo-RL統一）。タグはNGCカタログで実機確認
+# S4/S5用（NeMo-RL統一）。latestタグは存在しない（実機確認済: v0.5.0/v0.6.0/v0.7.0）。
+# sft_lora.yaml等のキー構造が準拠するバージョンと必ず揃える（RL_REFはclone時のブランチ/タグ）
+RL_IMG      ?= nvcr.io/nvidia/nemo-rl:v0.7.0
+RL_REF      ?= v0.7.0
 CURATOR_IMG ?= nvcr.io/nvidia/nemo-curator:latest # 〃（S1はpython:3.12-slimでも可）
 PY_IMG      ?= python:3.12-slim                    # 閉域では nemo-tools:latest（make build-tools）に差し替え
 
@@ -118,11 +121,11 @@ dapt:                ## S3 継続事前学習（任意）
 prep-rl:             ## S4/S5用データ変換（distilled → NeMo-RL ResponseDataset形式。CPUで可）
 	$(RUN) $(PY_IMG) python /pipeline/s5_rl/prep_rl_data.py --in /data/distilled --out /data/distilled/rl
 sft:                 ## S4 SFT/LoRA（NeMo-RL: examples/run_sft.py + s4_sft/sft_lora.yaml）
-	$(RUN) $(GPU) $(TRACK) --shm-size=16g $(RL_IMG) bash /pipeline/s4_sft/run_sft.sh
+	$(RUN) $(GPU) $(TRACK) --shm-size=16g -e RL_REF=$(RL_REF) $(RL_IMG) bash /pipeline/s4_sft/run_sft.sh
 grpo:                ## S5 GRPO（NeMo-RL + カスタム報酬環境 finance_grounding。OOM時 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64）
 	$(RUN) $(GPU) $(TRACK) --shm-size=32g -e PIPELINE_DIR=/pipeline $(RL_IMG) bash -lc \
 	  "if [ -d /pipeline/vendor/RL ]; then cd /pipeline/vendor/RL; \
-	   else git clone --depth 1 https://github.com/NVIDIA-NeMo/RL /rl && cd /rl; fi && \
+	   else git clone --depth 1 --branch $(RL_REF) https://github.com/NVIDIA-NeMo/RL /rl && cd /rl; fi && \
 	   PYTHONPATH=/pipeline/s5_rl:$$PYTHONPATH \
 	   uv run /pipeline/s5_rl/run_grpo_finance.py --config /pipeline/s5_rl/grpo_qwen.yaml"
 vendor-rl:           ## 閉域準備: NeMo-RLをリポ内に取り込み（--recursiveでsubmodule込み・オンライン環境で一度）
