@@ -20,6 +20,7 @@ checkpointing:
   higher_is_better: false
   keep_top_k: 2
   save_period: 50              # spot中断前提で細かめに保存
+  checkpoint_must_save_by: null  # v0.6.0必須キー（時間ベースの強制保存。使わないのでnull）
   save_optimizer: true
 
 policy:
