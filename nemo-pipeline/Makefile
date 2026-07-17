@@ -129,8 +129,8 @@ vendor-rl:           ## 閉域準備: NeMo-RLをリポ内に取り込み（--rec
 	git clone --depth 1 --recursive https://github.com/NVIDIA-NeMo/RL vendor/RL
 
 # --- 評価（OPENAI_BASE_URL=推論エンドポイント。TAG=base|sft|grpo） ------------
-eval:                ## S6 本評価（exit 0=合格 / 2=閾値未達）。reasoningモデルは EVAL_SYS_PREFIX="/no_think" 推奨
-	$(RUN) -e OPENAI_BASE_URL -e OPENAI_API_KEY -e EVAL_SYS_PREFIX $(PY_IMG) bash -lc "(pip -q install pyyaml 2>/dev/null || true) && \
+eval:                ## S6 本評価（exit 0=合格 / 2=閾値未達）。Nemotronは EVAL_CHAT_KWARGS='{"enable_thinking": false}' で思考抑止
+	$(RUN) -e OPENAI_BASE_URL -e OPENAI_API_KEY -e EVAL_SYS_PREFIX -e EVAL_CHAT_KWARGS $(PY_IMG) bash -lc "(pip -q install pyyaml 2>/dev/null || true) && \
 	  python /pipeline/s6_evaluation/s6_eval.py --config /pipeline/s6_evaluation/eval.yaml --tag $(TAG)"
 eval-dry:            ## S6 配管検証（エンドポイント不要・全指標満点になるはず）
 	$(RUN) $(PY_IMG) bash -lc "(pip -q install pyyaml 2>/dev/null || true) && \

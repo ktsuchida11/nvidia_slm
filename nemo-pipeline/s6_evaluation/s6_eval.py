@@ -27,9 +27,16 @@ def chat(base_url: str, model: str, system: str, user: str, max_tokens: int = 70
     prefix = os.getenv("EVAL_SYS_PREFIX", "")
     if prefix:
         system = f"{prefix}\n{system}"
-    body = json.dumps({"model": model, "max_tokens": max_tokens,
-                       "messages": [{"role": "system", "content": system},
-                                    {"role": "user", "content": user}]}).encode()
+    payload = {"model": model, "max_tokens": max_tokens,
+               "messages": [{"role": "system", "content": system},
+                            {"role": "user", "content": user}]}
+    # EVAL_CHAT_KWARGS: vLLMのchat_template_kwargsをJSONで注入する
+    # （Nemotron-Nano-v2-Japanese は /no_think を無視するため
+    #   '{"enable_thinking": false}' が唯一有効な思考抑止手段 — 実機検証済み）
+    kwargs = os.getenv("EVAL_CHAT_KWARGS", "")
+    if kwargs:
+        payload["chat_template_kwargs"] = json.loads(kwargs)
+    body = json.dumps(payload).encode()
     req = urllib.request.Request(f"{base_url.rstrip('/')}/chat/completions", data=body,
                                  headers={"Content-Type": "application/json",
                                           "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY','sk-local')}"})
