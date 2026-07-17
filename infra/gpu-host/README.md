@@ -40,8 +40,8 @@ aws ssm start-session --target <gpu-instance-id> \
   --document-name nvslm-dev-SessionManagerRunShell --region ap-northeast-1 --profile gpu-account
 
 # ファイル転送はS3経由（SGは何もinboundを開けない）:
-aws s3 cp data/distilled/rl/ s3://<ckpt_bucket>/data/rl/ --recursive   # ローカル側
-aws s3 sync s3://$CKPT_BUCKET/data/rl/ data/distilled/rl/              # GPUノード側
+bash nemo-pipeline/remote/push-to-s3.sh                                # ローカル側（--with-repo でリポも）
+aws s3 sync s3://$CKPT_BUCKET/data/distilled/ data/distilled/          # GPUノード側
 ```
 
 > scp/rsyncを使いたい場合は `aws ssm start-session --document-name AWS-StartSSHSession` による
