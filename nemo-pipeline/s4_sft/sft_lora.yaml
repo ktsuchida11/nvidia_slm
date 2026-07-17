@@ -60,6 +60,12 @@ policy:
       lora_A_init: "xavier"
       use_triton: true
 
+  # Megatronバックエンドは不使用（DTensor使用）。ただし v0.6.0 の sft.py は
+  # enabled / use_linear_ce_fusion_loss を .get なしで直接参照するため定義必須
+  megatron_cfg:
+    enabled: false
+    use_linear_ce_fusion_loss: false
+
   dynamic_batching:
     enabled: false
     train_mb_tokens: ${mul:${policy.max_total_sequence_length}, ${policy.train_micro_batch_size}}
