@@ -122,7 +122,10 @@ dapt:                ## S3 継続事前学習（任意）
 prep-rl:             ## S4/S5用データ変換（distilled → NeMo-RL ResponseDataset形式。CPUで可）
 	$(RUN) $(PY_IMG) python /pipeline/s5_rl/prep_rl_data.py --in /data/distilled --out /data/distilled/rl
 sft:                 ## S4 SFT/LoRA（NeMo-RL: examples/run_sft.py + s4_sft/sft_lora.yaml）
-	$(RUN) $(GPU) $(TRACK) --shm-size=16g -e RL_REF=$(RL_REF) $(RL_IMG) bash /pipeline/s4_sft/run_sft.sh
+	$(RUN) $(GPU) $(TRACK) --shm-size=16g -e RL_REF=$(RL_REF) \
+	  -v $${HF_HOME:-$$HOME/.cache/huggingface}:/root/.cache/huggingface \
+	  -e RAY_memory_monitor_refresh_ms=0 \
+	  $(RL_IMG) bash /pipeline/s4_sft/run_sft.sh
 grpo:                ## S5 GRPO（NeMo-RL + カスタム報酬環境 finance_grounding。OOM時 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64）
 	$(RUN) $(GPU) $(TRACK) --shm-size=32g -e PIPELINE_DIR=/pipeline $(RL_IMG) bash -lc \
 	  "if [ -d /opt/nemo-rl/examples ]; then cd /opt/nemo-rl; \
