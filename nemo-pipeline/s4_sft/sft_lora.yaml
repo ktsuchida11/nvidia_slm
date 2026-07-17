@@ -35,15 +35,17 @@ policy:
     chat_template_kwargs: null
   train_global_batch_size: 32
   train_micro_batch_size: 1
-  max_total_sequence_length: 4096
+  # L40S 44GBではseq4096の活性化がOOM（実測）。2048ならanalysis系（最大~1000字+sys）は
+  # 全件収まる。generation系(~4000字,16件)は超過→loss_multiplier=0で自動無効化されるが、
+  # base評価でgeneration指標は既に満点(source_exists/citation_format=1.0)のため今周は
+  # analysis特化で問題ない。generation学習が必要になったら要対策（packing/分割/大GPU）
+  max_total_sequence_length: 2048
   precision: "bfloat16"
 
   dtensor_cfg:
     _v2: true
     enabled: true
-    # 9B + seq4096 の活性化で 44GB を超過（L40S実測: backward時OOM）。
-    # パラメータをCPU退避してGPUを活性化に明け渡す（ステップは遅くなるが数step程度）
-    cpu_offload: true
+    cpu_offload: false         # シングルGPUでは未実装（v0.6.0で NotImplementedError を実機確認）
     sequence_parallel: false
     activation_checkpointing: true    # 48GB安全側
     tensor_parallel_size: 1
