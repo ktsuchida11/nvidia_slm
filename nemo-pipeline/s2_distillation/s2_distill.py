@@ -13,6 +13,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "common"
 from reward import source_exists   # 単一の忠実性概念を蒸留品質ゲートでも共有
 from schema import validate_analysis
 from prompts import SECTORS, SYN_QUERY_SYS, CHUNK_QUERY_SYS, LABEL_SYS, ANSWER_SYS
+from label_lint import lint_label
 
 logging.basicConfig(level=logging.INFO, format="[distill] %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -94,11 +95,40 @@ def gen_answer(client, chunks: list[dict], q: str, dry: bool, refuse: bool = Fal
     ctx = "\n---\n".join(f"[SOURCE: {c['label']}]\n{c['text']}" for c in chunks)
     return call_teacher(client, ANSWER_SYS, f"{ctx}\n\n質問: {q}", 900)
 
-def relabel_splits(client, out_p: pathlib.Path, today: str, dry: bool) -> dict:
+def lint_splits(out_p: pathlib.Path, today: str) -> dict:
+    """既存分割のanalysisゴールドを規約リント(label_lint)にかけ、違反一覧を
+    lint_report.json へ書く。API不要。基準日は各itemのmeta.label_todayを優先
+    (相対日付ゴールドはラベル付け日基準のため)。"""
+    report: dict = {"violations": {}, "counts": Counter()}
+    for name in ["train", "valid", "heldout"]:
+        p = out_p / f"{name}.jsonl"
+        items = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+        vs = []
+        for i, it in enumerate(items):
+            if it["meta"]["task"] != "analysis":
+                continue
+            codes = lint_label(it["input"], it["label"], it["meta"].get("label_today") or today)
+            if codes:
+                vs.append({"i": i, "codes": codes, "input": it["input"], "label": it["label"]})
+                report["counts"].update(codes)
+        report["violations"][name] = vs
+        log.info("lint %s: 違反 %d件 / analysis %d件", name, len(vs),
+                 sum(1 for it in items if it["meta"]["task"] == "analysis"))
+    report["counts"] = dict(report["counts"])
+    (out_p / "lint_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    log.info("違反コード内訳: %s", report["counts"])
+    return report
+
+def relabel_splits(client, out_p: pathlib.Path, today: str, dry: bool,
+                   only: dict[str, set[int]] | None = None) -> dict:
     """既存分割(train/valid/heldout)のanalysisラベルのみをLABEL_SYSの現行規約で再生成。
     質問・generation・分割は保持するためリークは発生しない。ラベル規約の変更は
     heldoutのゴールドも再定義するので、評価はbaseから再測定すること。
-    基準日は meta.label_today に記録し、評価側の相対日付計算と揃える。"""
+    基準日は meta.label_today に記録し、評価側の相対日付計算と揃える。
+    only指定時(規約リント違反のみ等)は該当インデックスだけ再ラベルする —
+    このとき基準日は既存itemのlabel_todayと揃えること(混在するとs6_evalが警告し
+    実行日にフォールバックして相対日付ゴールドが崩れる)。"""
     backup = out_p / "pre-relabel-backup"
     backup.mkdir(exist_ok=True)
     stats: dict = {"today": today, "changed": {}, "failed": {}, "analysis": {}}
@@ -108,8 +138,10 @@ def relabel_splits(client, out_p: pathlib.Path, today: str, dry: bool) -> dict:
         (backup / f"{name}.jsonl").write_text(
             "".join(json.dumps(it, ensure_ascii=False) + "\n" for it in items), encoding="utf-8")
         changed = failed = n_ana = 0
-        for it in items:
+        for i, it in enumerate(items):
             if it["meta"]["task"] != "analysis":
+                continue
+            if only is not None and i not in only.get(name, set()):
                 continue
             n_ana += 1
             try:
@@ -153,10 +185,48 @@ def dedup(items: list[dict]) -> list[dict]:
     return out
 
 def main(inp: str, out: str, heldout_ratio: float, n_analysis: int, n_generation: int,
-         gen_chunks: int, chunk_chars: int, dry: bool, relabel: bool = False):
+         gen_chunks: int, chunk_chars: int, dry: bool, relabel: bool = False,
+         lint: bool = False, only_lint: bool = False, today_arg: str | None = None):
     rng = random.Random(42)
     out_p = pathlib.Path(out); out_p.mkdir(parents=True, exist_ok=True)
-    today = time.strftime("%Y-%m-%d")
+    today = today_arg or time.strftime("%Y-%m-%d")
+
+    # リント・部分再ラベルの基準日は既存データの label_today に揃える。
+    # 部分再ラベルで基準日が混在すると s6_eval が実行日フォールバックし
+    # 相対日付ゴールドが崩れる
+    if lint or (relabel and only_lint):
+        lts: set = set()
+        for name in ["train", "valid", "heldout"]:
+            p = out_p / f"{name}.jsonl"
+            if not p.exists(): continue
+            for l in p.read_text(encoding="utf-8").splitlines():
+                if not l.strip(): continue
+                it = json.loads(l)
+                if it["meta"]["task"] == "analysis":
+                    lts.add(it["meta"].get("label_today"))
+        lts.discard(None)
+        if not today_arg and len(lts) == 1:
+            today = next(iter(lts))
+        elif len(lts) == 1 and today not in lts:
+            log.error("--today=%s が既存の label_today=%s と不一致。基準日を揃えること", today, lts)
+            sys.exit(1)
+        log.info("基準日(today)=%s", today)
+
+    if lint:
+        lint_splits(out_p, today)
+        return
+
+    only = None
+    n_teacher = n_analysis
+    if relabel and only_lint:
+        rp = out_p / "lint_report.json"
+        if not rp.exists():
+            log.error("lint_report.json が無い。先に --lint を実行"); sys.exit(1)
+        rep = json.loads(rp.read_text(encoding="utf-8"))
+        only = {name: {v["i"] for v in vs} for name, vs in rep["violations"].items()}
+        n_teacher = sum(len(s) for s in only.values())
+        if n_teacher == 0:
+            log.info("リント違反0件 — 再ラベル不要"); return
 
     client = None
     if not dry:
@@ -164,11 +234,11 @@ def main(inp: str, out: str, heldout_ratio: float, n_analysis: int, n_generation
             log.error("ANTHROPIC_API_KEY 未設定。配管確認だけなら --dry-run"); sys.exit(1)
         import anthropic
         client = anthropic.Anthropic()
-        est = (n_analysis * 0.6) if relabel else (n_analysis * 0.6 + n_generation * 2.2)  # kトークン概算/件
+        est = (n_teacher * 0.6) if relabel else (n_teacher * 0.6 + n_generation * 2.2)  # kトークン概算/件
         log.info("概算教師コスト: ~$%.1f (入出力%.0fKtok想定・実測で要確認)", est * 0.015, est)
 
     if relabel:
-        relabel_splits(client, out_p, today, dry)
+        relabel_splits(client, out_p, today, dry, only)
         log.info("★ ラベル規約が変わったため prep-rl の再実行と base からの再評価が必要")
         return
 
@@ -240,6 +310,12 @@ if __name__ == "__main__":
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--relabel", action="store_true",
                    help="既存分割のanalysisラベルのみLABEL_SYS現行規約で再生成(質問・分割・generation保持)")
+    p.add_argument("--lint", action="store_true",
+                   help="既存ゴールドの規約リント(API不要)。違反を lint_report.json へ")
+    p.add_argument("--only-lint", action="store_true",
+                   help="--relabel と併用: lint_report.json の違反itemのみ再ラベル")
+    p.add_argument("--today", default=None,
+                   help="基準日の上書き(YYYY-MM-DD)。既定: 既存label_today→実行日")
     a = p.parse_args()
     main(a.inp, a.out, a.heldout_ratio, a.n_analysis, a.n_generation, a.gen_chunks, a.chunk_chars,
-         a.dry_run, a.relabel)
+         a.dry_run, a.relabel, a.lint, a.only_lint, a.today)
