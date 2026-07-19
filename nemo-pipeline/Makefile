@@ -78,10 +78,12 @@ curate:              ## S1 収集・管理（CPUで可。Curator委譲は --engi
 distill:             ## S2 蒸留（要 ANTHROPIC_API_KEY。LiteLLM経由は ANTHROPIC_BASE_URL/TEACHER_MODEL を指定）
 	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
 	  python /pipeline/s2_distillation/s2_distill.py --in /data/curated --out /data/distilled \
-	  --n-analysis $(or $(N_ANALYSIS),300) --n-generation $(or $(N_GEN),100)"
+	  --n-analysis $(or $(N_ANALYSIS),300) --n-generation $(or $(N_GEN),100) \
+	  --gen-chunks $(or $(GEN_CHUNKS),2) --chunk-chars $(or $(CHUNK_CHARS),700)"
 distill-dry:         ## S2 配管検証（API不要・数秒）
 	$(RUN) $(PY_IMG) python /pipeline/s2_distillation/s2_distill.py \
-	  --in /data/curated --out /data/distilled --dry-run
+	  --in /data/curated --out /data/distilled --dry-run \
+	  --gen-chunks $(or $(GEN_CHUNKS),2) --chunk-chars $(or $(CHUNK_CHARS),700)
 
 # --- 実験トラッキング（クローズド網: 自前MLflow。外部送信なし） ----------------
 build-tools:         ## 閉域準備: 依存焼き込みツールイメージをbuild（オンライン環境で一度実行）
