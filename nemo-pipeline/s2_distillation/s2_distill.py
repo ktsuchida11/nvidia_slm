@@ -94,6 +94,42 @@ def gen_answer(client, chunks: list[dict], q: str, dry: bool, refuse: bool = Fal
     ctx = "\n---\n".join(f"[SOURCE: {c['label']}]\n{c['text']}" for c in chunks)
     return call_teacher(client, ANSWER_SYS, f"{ctx}\n\n質問: {q}", 900)
 
+def relabel_splits(client, out_p: pathlib.Path, today: str, dry: bool) -> dict:
+    """既存分割(train/valid/heldout)のanalysisラベルのみをLABEL_SYSの現行規約で再生成。
+    質問・generation・分割は保持するためリークは発生しない。ラベル規約の変更は
+    heldoutのゴールドも再定義するので、評価はbaseから再測定すること。
+    基準日は meta.label_today に記録し、評価側の相対日付計算と揃える。"""
+    backup = out_p / "pre-relabel-backup"
+    backup.mkdir(exist_ok=True)
+    stats: dict = {"today": today, "changed": {}, "failed": {}, "analysis": {}}
+    for name in ["train", "valid", "heldout"]:
+        p = out_p / f"{name}.jsonl"
+        items = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+        (backup / f"{name}.jsonl").write_text(
+            "".join(json.dumps(it, ensure_ascii=False) + "\n" for it in items), encoding="utf-8")
+        changed = failed = n_ana = 0
+        for it in items:
+            if it["meta"]["task"] != "analysis":
+                continue
+            n_ana += 1
+            try:
+                new = label_query(client, it["input"], today, dry)
+            except (ValueError, json.JSONDecodeError):
+                failed += 1; continue      # 失敗時は旧ラベル維持(件数・分割を不変に保つ)
+            if new != it["label"]:
+                changed += 1
+            it["label"] = new
+            it["meta"]["label_today"] = today
+        p.write_text("".join(json.dumps(it, ensure_ascii=False) + "\n" for it in items),
+                     encoding="utf-8")
+        stats["changed"][name] = changed; stats["failed"][name] = failed
+        stats["analysis"][name] = n_ana
+        log.info("relabel %s: analysis %d件中 変更%d / 失敗(旧維持)%d", name, n_ana, changed, failed)
+    (out_p / "relabel_stats.json").write_text(
+        json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
+    return stats
+
+
 # ---- 分割・出力 ---------------------------------------------------------------
 def stratified_split(items: list[dict], heldout: float, rng: random.Random):
     by_key: dict[tuple, list[dict]] = {}
@@ -117,7 +153,7 @@ def dedup(items: list[dict]) -> list[dict]:
     return out
 
 def main(inp: str, out: str, heldout_ratio: float, n_analysis: int, n_generation: int,
-         gen_chunks: int, chunk_chars: int, dry: bool):
+         gen_chunks: int, chunk_chars: int, dry: bool, relabel: bool = False):
     rng = random.Random(42)
     out_p = pathlib.Path(out); out_p.mkdir(parents=True, exist_ok=True)
     today = time.strftime("%Y-%m-%d")
@@ -128,8 +164,13 @@ def main(inp: str, out: str, heldout_ratio: float, n_analysis: int, n_generation
             log.error("ANTHROPIC_API_KEY 未設定。配管確認だけなら --dry-run"); sys.exit(1)
         import anthropic
         client = anthropic.Anthropic()
-        est = (n_analysis * 0.6 + n_generation * 2.2)  # kトークン概算/件(質問生成の1呼び出し分を含む)
+        est = (n_analysis * 0.6) if relabel else (n_analysis * 0.6 + n_generation * 2.2)  # kトークン概算/件
         log.info("概算教師コスト: ~$%.1f (入出力%.0fKtok想定・実測で要確認)", est * 0.015, est)
+
+    if relabel:
+        relabel_splits(client, out_p, today, dry)
+        log.info("★ ラベル規約が変わったため prep-rl の再実行と base からの再評価が必要")
+        return
 
     items, rejects = [], Counter()
 
@@ -197,5 +238,8 @@ if __name__ == "__main__":
                    help="生成タスクのチャンク数(SFT seq2048に収める: 2×700字+システム+回答で概ね上限)")
     p.add_argument("--chunk-chars", type=int, default=700)
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--relabel", action="store_true",
+                   help="既存分割のanalysisラベルのみLABEL_SYS現行規約で再生成(質問・分割・generation保持)")
     a = p.parse_args()
-    main(a.inp, a.out, a.heldout_ratio, a.n_analysis, a.n_generation, a.gen_chunks, a.chunk_chars, a.dry_run)
+    main(a.inp, a.out, a.heldout_ratio, a.n_analysis, a.n_generation, a.gen_chunks, a.chunk_chars,
+         a.dry_run, a.relabel)
