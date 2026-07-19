@@ -11,7 +11,7 @@ import argparse, json, logging, os, pathlib, sys, time, urllib.request
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "common"))
 from reward import source_exists, citation_format
 from schema import validate_analysis
-from prompts import LABEL_SYS, ANSWER_SYS
+from prompts import LABEL_SYS, ANSWER_SYS, format_today
 
 logging.basicConfig(level=logging.INFO, format="[eval] %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -126,7 +126,7 @@ def main():
         task = it["meta"]["task"]
         if task == "analysis":
             pred = json.dumps(it["label"], ensure_ascii=False) if a.mode == "dry" else \
-                   chat(base_url, model, LABEL_SYS.replace("{today}", today), it["input"], 400)
+                   chat(base_url, model, LABEL_SYS.replace("{today}", format_today(today)), it["input"], 400)
             m = eval_analysis(it, pred)
         else:
             if a.mode == "dry":

@@ -12,7 +12,7 @@ from collections import Counter
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "common"))
 from reward import source_exists   # 単一の忠実性概念を蒸留品質ゲートでも共有
 from schema import validate_analysis
-from prompts import SECTORS, SYN_QUERY_SYS, CHUNK_QUERY_SYS, LABEL_SYS, ANSWER_SYS
+from prompts import SECTORS, SYN_QUERY_SYS, CHUNK_QUERY_SYS, LABEL_SYS, ANSWER_SYS, format_today
 from label_lint import lint_label
 
 logging.basicConfig(level=logging.INFO, format="[distill] %(levelname)s %(message)s")
@@ -67,7 +67,7 @@ def label_query(client, q: str, today: str, dry: bool) -> dict:
     if dry:
         return validate_analysis({"sectors": ["crude_oil"], "date_range": None,
                                   "query_type": "single", "semantic_query": q})
-    raw = extract_json(call_teacher(client, LABEL_SYS.replace("{today}", today), q, 400))
+    raw = extract_json(call_teacher(client, LABEL_SYS.replace("{today}", format_today(today)), q, 400))
     return validate_analysis(raw)
 
 def make_chunks(docs: list[dict], k: int, chars: int, rng: random.Random) -> list[dict]:
