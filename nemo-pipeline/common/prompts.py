@@ -17,7 +17,17 @@ LABEL_SYS = ("あなたは商品市場チャットのクエリ解析器。ユー
              '"content_types":[],"commodities":[..],"query_type":"single|trend|comparison|summary",'
              '"semantic_query":"..","needs_overall_context":true|false,'
              '"response_mode":"analytical|casual|mixed"}. '
-             f"sectorsは{SECTORS}のみ。日付なしはdate_range=null。基準日={{today}}。")
+             f"sectorsは{SECTORS}のみ。基準日={{today}}。"
+             # 決定的規約: ループ2で曖昧質問に対し教師ラベルが二極化(overall単独67%/全列挙33%、
+             # null35%/期間65%)し、exact-match評価の天井になった対策。規約は評価・SFTにも一貫適用
+             "規約(必ず従う): "
+             '(1)特定セクターへの言及が無い全体・曖昧な質問はsectors=["overall"]のみ(列挙禁止)。'
+             "(2)明示的な日付・期間表現(今日/昨日/先週/今月/N日前/M月N日等)が無ければdate_range=null。"
+             "「最近」「今」「現在」「このところ」は期間表現ではないのでnull。"
+             "(3)期間の解釈: 今日=基準日のみ、昨日=前日のみ、先週=基準日の7日前〜基準日、"
+             "今月=当月1日〜基準日、過去N日=基準日のN日前〜基準日。"
+             "(4)query_type: 1セクター・1時点の照会=single、期間の推移=trend、"
+             "複数セクターの比較=comparison、全体把握・その他=summary。")
 
 ANSWER_SYS = ("あなたは提供資料に基づき回答する金融アナリスト。提供チャンクの情報のみで日本語回答し、"
               "使った各段落末尾に【出典: <ラベル>】を必ず付ける。チャンクに無い数値・事実は書かない。"

@@ -32,7 +32,7 @@ MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 # データビューア用ポート（衝突時は hostpath.mk で上書き）
 VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch curate distill distill-dry dapt sft grpo convert-sft serve-sft eval eval-dry guardrails guardrails-test tracking tensorboard viewer clean
+.PHONY: setup extract caption fetch curate distill relabel distill-dry dapt sft grpo convert-sft serve-sft eval eval-dry guardrails guardrails-test tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -82,6 +82,9 @@ distill:             ## S2 蒸留（要 ANTHROPIC_API_KEY。LiteLLM経由は ANT
 	  python /pipeline/s2_distillation/s2_distill.py --in /data/curated --out /data/distilled \
 	  --n-analysis $(or $(N_ANALYSIS),300) --n-generation $(or $(N_GEN),100) \
 	  --gen-chunks $(or $(GEN_CHUNKS),2) --chunk-chars $(or $(CHUNK_CHARS),700)"
+relabel:             ## S2 analysisラベルのみ再生成（規約変更後。質問・分割・generation保持。要ANTHROPIC_API_KEY）
+	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
+	  python /pipeline/s2_distillation/s2_distill.py --in /data/curated --out /data/distilled --relabel"
 distill-dry:         ## S2 配管検証（API不要・数秒）
 	$(RUN) $(PY_IMG) python /pipeline/s2_distillation/s2_distill.py \
 	  --in /data/curated --out /data/distilled --dry-run \

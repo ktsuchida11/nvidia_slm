@@ -104,10 +104,18 @@ def main():
     thresholds = cfg["suites"][0].get("thresholds", {})
     base_url = os.getenv("OPENAI_BASE_URL", cfg.get("endpoint", {}).get("base_url", ""))
     model = cfg.get("endpoint", {}).get("model", "qwen3-gen")
-    today = time.strftime("%Y-%m-%d")
 
     items = [json.loads(l) for l in open(heldout, encoding="utf-8") if l.strip()]
     if a.limit: items = items[: a.limit]
+
+    # 基準日: ラベル付け時のtoday(meta.label_today)があればそれを使う。
+    # ゴールドの相対日付(先週=7日前〜等)はラベル付け日基準のため、評価実行日と
+    # ずれると date_range が全て不一致になる
+    lt = {it["meta"].get("label_today") for it in items if it["meta"]["task"] == "analysis"}
+    lt.discard(None)
+    today = lt.pop() if len(lt) == 1 else time.strftime("%Y-%m-%d")
+    if lt: log.warning("label_today が複数混在。実行日を基準日に使用")
+    log.info("基準日(today)=%s", today)
     if a.mode == "live" and not base_url:
         log.error("OPENAI_BASE_URL が未設定(liveモード)"); sys.exit(1)
 
