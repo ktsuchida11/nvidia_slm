@@ -23,7 +23,9 @@ CURATOR_IMG ?= nvcr.io/nvidia/nemo-curator:latest # 〃（S1はpython:3.12-slim�
 PY_IMG      ?= python:3.12-slim                    # 閉域では nemo-tools:latest（make build-tools）に差し替え
 
 GPU := --gpus all
-RUN := docker run --rm -i --add-host=host.docker.internal:host-gateway -v $(HOST_PWD):/pipeline -v $(HOST_PWD)/data:/data -v $(HOST_PWD)/checkpoints:/ckpt -v $(HOST_PWD)/results:/results
+# DOCKER_NET: 起動コンテナを特定Dockerネットワークへ接続（任意・機械固有は hostpath.mk で指定）。
+# 例: DevContainer(DooD)で LiteLLM ゲートウェイと同一ネットワークに乗せて http://litellm:4000 に到達する
+RUN := docker run --rm -i $(if $(DOCKER_NET),--network $(DOCKER_NET)) --add-host=host.docker.internal:host-gateway -v $(HOST_PWD):/pipeline -v $(HOST_PWD)/data:/data -v $(HOST_PWD)/checkpoints:/ckpt -v $(HOST_PWD)/results:/results
 MLFLOW_PORT ?= 5000
 MLFLOW_IMG  ?= ghcr.io/mlflow/mlflow:latest       # 壊れている場合は nemo-tools:latest（mlflow同梱）
 MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
