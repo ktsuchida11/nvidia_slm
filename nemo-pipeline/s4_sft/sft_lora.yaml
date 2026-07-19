@@ -20,6 +20,7 @@ checkpointing:
   higher_is_better: false
   keep_top_k: 2
   save_period: 50              # spot中断前提で細かめに保存
+  checkpoint_must_save_by: null  # v0.6.0必須キー（時間ベースの強制保存。使わないのでnull）
   save_optimizer: true
 
 policy:
@@ -28,17 +29,23 @@ policy:
   model_name: nvidia/NVIDIA-Nemotron-Nano-9B-v2-Japanese
   tokenizer:
     name: ${policy.model_name}
-    chat_template: null        # モデル既定のchat templateを使う（Nemotronのreasoning作法を壊さない）
+    # モデル既定のchat templateを使う。v0.6.0では null は「素通し（contentを連結するだけ）」の
+    # 意味になるため注意 — 既定テンプレートは "default" と明示する必要がある（実機確認済み）
+    chat_template: "default"
     chat_template_kwargs: null
   train_global_batch_size: 32
   train_micro_batch_size: 1
-  max_total_sequence_length: 4096
+  # L40S 44GBではseq4096の活性化がOOM（実測）。2048ならanalysis系（最大~1000字+sys）は
+  # 全件収まる。generation系(~4000字,16件)は超過→loss_multiplier=0で自動無効化されるが、
+  # base評価でgeneration指標は既に満点(source_exists/citation_format=1.0)のため今周は
+  # analysis特化で問題ない。generation学習が必要になったら要対策（packing/分割/大GPU）
+  max_total_sequence_length: 2048
   precision: "bfloat16"
 
   dtensor_cfg:
     _v2: true
     enabled: true
-    cpu_offload: false
+    cpu_offload: false         # シングルGPUでは未実装（v0.6.0で NotImplementedError を実機確認）
     sequence_parallel: false
     activation_checkpointing: true    # 48GB安全側
     tensor_parallel_size: 1
@@ -57,6 +64,12 @@ policy:
       dropout_position: "post"
       lora_A_init: "xavier"
       use_triton: true
+
+  # Megatronバックエンドは不使用（DTensor使用）。ただし v0.6.0 の sft.py は
+  # enabled / use_linear_ce_fusion_loss を .get なしで直接参照するため定義必須
+  megatron_cfg:
+    enabled: false
+    use_linear_ce_fusion_loss: false
 
   dynamic_batching:
     enabled: false
@@ -81,6 +94,14 @@ policy:
       fused: false
 
 data:
+  # v0.6.0 run_sft.py/sft.py の必須キー（無いと KeyError）
+  max_input_seq_length: ${policy.max_total_sequence_length}
+  add_bos: true
+  add_eos: true
+  shuffle: true
+  num_workers: 1
+  # true = userメッセージ末尾にassistantヘッダ（generation prompt）を含めて描画。
+  # 推論時(vLLM)と同じ境界で応答トークンが始まるため、chat template使用時はtrueが正
   add_generation_prompt: true
   # 2タスクを別データセットとして与える（system promptが異なるため）。
   # prep_rl_data.py の出力（プロンプトは s6_eval と同一描画）。
@@ -108,6 +129,9 @@ data:
       system_prompt_file: /data/distilled/rl/prompts/answer_sys.txt
   default:
     prompt_file: null
+    system_prompt_file: null
+    # 必須: 未指定だと "default"（math用プロセッサ）が使われてしまう（v0.6.0実機確認）
+    processor: "sft_processor"
 
 logger:                        # クローズド網: 外部SaaSなし（W&B不使用）
   log_dir: /results/logs/sft
