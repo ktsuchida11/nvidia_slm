@@ -3,9 +3,9 @@
 # 実行: run_sft.sh（make sft）。事前に prep_rl_data.py で data/distilled/rl/ を生成しておくこと。
 # ★実機確認事項: コンテナ版とレシピ版の整合（RL_IMG のタグ）、データパスのマウント位置。
 sft:
-  max_num_epochs: 2
+  max_num_epochs: 3            # ループ2: データ3.7倍(304件)・lr引き下げに伴い1epoch増
   max_num_steps: 1000
-  val_period: 50               # SFT中も検証を回す（S0の方針）。終了後は必ず make eval TAG=sft
+  val_period: 10               # 304件/バッチ32=約9step/epochなので10stepごとに検証
   val_batches: 8
   val_global_batch_size: 16
   val_micro_batch_size: 1
@@ -37,9 +37,9 @@ policy:
   train_micro_batch_size: 1
   # L40S 44GBではseq4096の活性化がOOM（実測）。2048ならanalysis系（最大~1000字+sys）は
   # 全件収まる。generation系(~4000字,16件)は超過→loss_multiplier=0で自動無効化されるが、
-  # base評価でgeneration指標は既に満点(source_exists/citation_format=1.0)のため今周は
-  # analysis特化で問題ない。generation学習が必要になったら要対策（packing/分割/大GPU）
-  max_total_sequence_length: 2048
+  # ループ2: 蒸留側でチャンクをk=2×700字に削減済み。generationサンプルは全体で最長
+  # ~2400字のため2560で全量が収まる。L40S実測: 4096はOOM・2048は余裕あり(loop-01-report)
+  max_total_sequence_length: 2560
   precision: "bfloat16"
 
   dtensor_cfg:
@@ -86,7 +86,7 @@ policy:
   optimizer:
     name: "torch.optim.AdamW"
     kwargs:
-      lr: 1.0e-4               # LoRA向け（full FTなら5e-6級へ）
+      lr: 5.0e-5               # ループ1の1e-4は304件に対し強め→半減（2e-5〜5e-5帯の上限）
       weight_decay: 0.1
       betas: [0.9, 0.98]
       eps: 1e-5
