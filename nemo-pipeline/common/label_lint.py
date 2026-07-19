@@ -86,17 +86,25 @@ def lint_label(q: str, label: dict, today: str) -> list[str]:
         s = t - datetime.timedelta(days=int(m_past.group(1)))
         if dr != {"start": s.isoformat(), "end": t.isoformat()}:
             v.append("date_rule3_過去N日")
-    # 「今週/先週X曜日」は該当X曜日の単日(月曜始まり週)。日付まで決定的に検査する —
-    # ループ3でend+1日、ループ4再ラベルでも曜日ずれ(火曜のつもりが水曜の日付)が
-    # 出た規則。教師は暦計算に弱いため機械検証が必須
+    # 「今週/先週X曜日」は該当X曜日の単日。ループ3でend+1日、ループ4再ラベルでも
+    # 曜日ずれ(火曜のつもりが水曜の日付)が出た規則。教師は暦計算に弱いため機械検証が必須
     m_wd = re.search(rf"(今週|先週)([{_WD}])曜", q)
     if m_wd and dr is not None:
-        monday = t - datetime.timedelta(days=t.weekday())
-        if m_wd.group(1) == "先週":
-            monday -= datetime.timedelta(days=7)
-        exp = (monday + datetime.timedelta(days=_WD.index(m_wd.group(2)))).isoformat()
-        if dr != {"start": exp, "end": exp}:
-            v.append("date_weekday_mismatch")
+        d_start = _d(dr["start"])
+        if dr["start"] != dr["end"]:
+            v.append("date_weekday_not_single")
+        elif m_wd.group(1) == "今週":
+            # 今週=基準日を含む月曜始まりの週(規約(3))— 日付まで決定的に検査
+            monday = t - datetime.timedelta(days=t.weekday())
+            exp = (monday + datetime.timedelta(days=_WD.index(m_wd.group(2)))).isoformat()
+            if dr["start"] != exp:
+                v.append("date_weekday_mismatch")
+        else:
+            # 先週X曜日: 規約(3)の先週=ローリング窓(7日前〜基準日)と暦週の2解釈が
+            # 併存し決定不能(教師は直近のX曜日を選ぶ)。曜日の一致と14日以内のみ検査
+            if d_start.weekday() != _WD.index(m_wd.group(2)) or \
+               not (t - datetime.timedelta(days=14) <= d_start <= t):
+                v.append("date_weekday_mismatch")
 
     # ---- query_type: 規約(4)の機械検証可能部分 ----
     # 比較語がある1セクターcomparisonは時点間比較(規約(4)で許容)なので流さない
