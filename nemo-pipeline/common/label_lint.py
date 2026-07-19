@@ -86,12 +86,21 @@ def lint_label(q: str, label: dict, today: str) -> list[str]:
         s = t - datetime.timedelta(days=int(m_past.group(1)))
         if dr != {"start": s.isoformat(), "end": t.isoformat()}:
             v.append("date_rule3_過去N日")
-    # 「今週火曜日」等の曜日指定は単日(ループ3でend+1日のゴールド誤りを検出した規則)
-    if re.search(rf"(今週|先週)[{_WD}]曜", q) and dr is not None and dr["start"] != dr["end"]:
-        v.append("date_weekday_not_single")
+    # 「今週/先週X曜日」は該当X曜日の単日(月曜始まり週)。日付まで決定的に検査する —
+    # ループ3でend+1日、ループ4再ラベルでも曜日ずれ(火曜のつもりが水曜の日付)が
+    # 出た規則。教師は暦計算に弱いため機械検証が必須
+    m_wd = re.search(rf"(今週|先週)([{_WD}])曜", q)
+    if m_wd and dr is not None:
+        monday = t - datetime.timedelta(days=t.weekday())
+        if m_wd.group(1) == "先週":
+            monday -= datetime.timedelta(days=7)
+        exp = (monday + datetime.timedelta(days=_WD.index(m_wd.group(2)))).isoformat()
+        if dr != {"start": exp, "end": exp}:
+            v.append("date_weekday_mismatch")
 
     # ---- query_type: 規約(4)の機械検証可能部分 ----
-    if qt == "comparison" and len(sectors) < 2:
+    # 比較語がある1セクターcomparisonは時点間比較(規約(4)で許容)なので流さない
+    if qt == "comparison" and len(sectors) < 2 and not re.search(r"比較|比べ|対比", q):
         v.append("comparison_lt2_sectors")
     if qt == "single" and re.search(r"一言|ひとこと|まとめて|総括|要約して", q):
         v.append("summary_worded_but_single")
