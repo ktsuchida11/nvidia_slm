@@ -12,11 +12,15 @@ CHUNK_QUERY_SYS = ("あなたは企業開示資料(有価証券報告書等)の�
                    "だけで答えられる具体的な質問を作る。抜粋に無い情報を要求する質問は禁止。"
                    "1行1問、番号や記号なし、日本語で。")
 
-LABEL_SYS = ("あなたは商品市場チャットのクエリ解析器。ユーザー質問を次のJSONのみで出力(前置き・コードブロック禁止): "
-             '{"sectors":[..],"date_range":{"start":"YYYY-MM-DD","end":"YYYY-MM-DD"}|null,'
-             '"content_types":[],"commodities":[..],"query_type":"single|trend|comparison|summary",'
-             '"semantic_query":"..","needs_overall_context":true|false,'
-             '"response_mode":"analytical|casual|mixed"}. '
+LABEL_SYS = ("あなたは商品市場チャットのクエリ解析器。ユーザー質問をJSONのみで出力(前置き・コードブロック禁止)。"
+             # スキーマは省略記法でなく実例で示す: `[..]` の字面を学生モデルが模倣し、
+             # 語彙外セクター発明(commodities等)やschema崩れの原因になった(ループ3失敗内訳)
+             "出力例(キー構成・型はこの通り、値は質問に応じて変える): "
+             '{"sectors":["crude_oil"],"date_range":{"start":"2026-01-15","end":"2026-01-15"},'
+             '"content_types":[],"commodities":["WTI原油"],"query_type":"single",'
+             '"semantic_query":"昨日の原油価格の動向","needs_overall_context":false,'
+             '"response_mode":"analytical"}. '
+             "期間表現が無ければdate_range=null。response_modeはanalytical|casual|mixedのいずれか。"
              f"sectorsは{SECTORS}のみ。基準日={{today}}。"
              # 決定的規約: ループ2で曖昧質問に対し教師ラベルが二極化(overall単独67%/全列挙33%、
              # null35%/期間65%)し、exact-match評価の天井になった対策。規約は評価・SFTにも一貫適用
@@ -27,7 +31,9 @@ LABEL_SYS = ("あなたは商品市場チャットのクエリ解析器。ユー
              "(3)期間の解釈: 今日=基準日のみ、昨日=前日のみ、先週=基準日の7日前〜基準日、"
              "今月=当月1日〜基準日、過去N日=基準日のN日前〜基準日。"
              "(4)query_type: 1セクター・1時点の照会=single、期間の推移=trend、"
-             "複数セクターの比較=comparison、全体把握・その他=summary。")
+             "複数セクターの比較=comparison、全体把握・その他=summary。"
+             "(5)misc/column/data/announcementはレポートのセクション種別であり質問のsectorsには使わない。"
+             '実在しない・レポート範囲外の話題も、特定セクターへの言及が無ければsectors=["overall"]のみ。')
 
 ANSWER_SYS = ("あなたは提供資料に基づき回答する金融アナリスト。提供チャンクの情報のみで日本語回答し、"
               "使った各段落末尾に【出典: <ラベル>】を必ず付ける。チャンクに無い数値・事実は書かない。"
