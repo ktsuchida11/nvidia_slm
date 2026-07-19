@@ -12,7 +12,7 @@ from collections import Counter
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "common"))
 from reward import source_exists   # 単一の忠実性概念を蒸留品質ゲートでも共有
 from schema import validate_analysis
-from prompts import SECTORS, SYN_QUERY_SYS, LABEL_SYS, ANSWER_SYS
+from prompts import SECTORS, SYN_QUERY_SYS, CHUNK_QUERY_SYS, LABEL_SYS, ANSWER_SYS
 
 logging.basicConfig(level=logging.INFO, format="[distill] %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -69,14 +69,27 @@ def label_query(client, q: str, today: str, dry: bool) -> dict:
     raw = extract_json(call_teacher(client, LABEL_SYS.replace("{today}", today), q, 400))
     return validate_analysis(raw)
 
-def make_chunks(docs: list[dict], k: int, rng: random.Random) -> list[dict]:
-    picks = rng.sample(docs, min(k, len(docs)))
-    return [{"label": d["meta"].get("source", f"DOC-{i}"), "text": d["text"][:1200]}
-            for i, d in enumerate(picks)]
+def make_chunks(docs: list[dict], k: int, chars: int, rng: random.Random) -> list[dict]:
+    # ラベルは curated 内インデックスで一意化する。全件同一ラベル(データセット名)だと
+    # source_exists の引用チェックが形骸化するため(ループ1の教訓)
+    idxs = rng.sample(range(len(docs)), min(k, len(docs)))
+    return [{"label": f'{docs[i]["meta"].get("source", "DOC")}#{i}', "text": docs[i]["text"][:chars]}
+            for i in idxs]
 
-def gen_answer(client, chunks: list[dict], q: str, dry: bool) -> str:
+def gen_chunk_query(client, chunk: dict, dry: bool) -> str:
+    """チャンクの実記載から答えられる質問を1つ生成(grounded QAの回答可能側)"""
+    if dry:
+        return f"ダミー質問: {chunk['label']} の会社の沿革の要点は？"
+    txt = call_teacher(client, CHUNK_QUERY_SYS, f"{chunk['text']}\n\n上の抜粋から答えられる質問を1個。", 200)
+    lines = [l.strip() for l in txt.splitlines() if l.strip()]
+    if not lines: raise ValueError("no query in teacher output")
+    return lines[0]
+
+def gen_answer(client, chunks: list[dict], q: str, dry: bool, refuse: bool = False) -> str:
     labels = [c["label"] for c in chunks]
     if dry:
+        if refuse:
+            return f"レポートに記載がありません。\n【出典: {labels[0]}】"
         return f"ダミー回答です。{q} に対する要点。\n【出典: {labels[0]}】"
     ctx = "\n---\n".join(f"[SOURCE: {c['label']}]\n{c['text']}" for c in chunks)
     return call_teacher(client, ANSWER_SYS, f"{ctx}\n\n質問: {q}", 900)
@@ -103,7 +116,8 @@ def dedup(items: list[dict]) -> list[dict]:
         seen.add(k); out.append(it)
     return out
 
-def main(inp: str, out: str, heldout_ratio: float, n_analysis: int, n_generation: int, dry: bool):
+def main(inp: str, out: str, heldout_ratio: float, n_analysis: int, n_generation: int,
+         gen_chunks: int, chunk_chars: int, dry: bool):
     rng = random.Random(42)
     out_p = pathlib.Path(out); out_p.mkdir(parents=True, exist_ok=True)
     today = time.strftime("%Y-%m-%d")
@@ -114,7 +128,7 @@ def main(inp: str, out: str, heldout_ratio: float, n_analysis: int, n_generation
             log.error("ANTHROPIC_API_KEY 未設定。配管確認だけなら --dry-run"); sys.exit(1)
         import anthropic
         client = anthropic.Anthropic()
-        est = (n_analysis * 0.6 + n_generation * 2.0)  # kトークン概算/件
+        est = (n_analysis * 0.6 + n_generation * 2.2)  # kトークン概算/件(質問生成の1呼び出し分を含む)
         log.info("概算教師コスト: ~$%.1f (入出力%.0fKtok想定・実測で要確認)", est * 0.015, est)
 
     items, rejects = [], Counter()
@@ -132,16 +146,32 @@ def main(inp: str, out: str, heldout_ratio: float, n_analysis: int, n_generation
                                    "teacher": TEACHER}})
 
     # (B) 生成タスク(蒸留)
+    # 80%: チャンク実記載から答えられる質問(grounded_qa) / 20%: チャンク外の質問に
+    # 正しく「記載がありません」と答える見本(unanswerable)。ループ1では質問テンプレが
+    # チャンク内容(EDINET開示)とミスマッチで全件が記載なし回答になった(loop-01-report.md)
     docs = [json.loads(l) for l in (pathlib.Path(inp) / "curated.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
     fin_docs = [d for d in docs if d["meta"].get("domain") == "finance"] or docs
+    n_unans = int(n_generation * 0.2)
     for i in range(n_generation):
-        chunks = make_chunks(fin_docs, k=3, rng=rng)
-        q = gen_queries(client, "single_sector_single_day", 1, dry)[0]
-        ans = gen_answer(client, chunks, q, dry)
-        if source_exists(ans, [c["label"] for c in chunks]) < 1.0:   # 忠実性ゲート(報酬と同一関数)
+        chunks = make_chunks(fin_docs, k=gen_chunks, chars=chunk_chars, rng=rng)
+        labels = [c["label"] for c in chunks]
+        unanswerable = i < n_unans
+        try:
+            q = gen_queries(client, "single_sector_single_day", 1, dry)[0] if unanswerable \
+                else gen_chunk_query(client, chunks[0], dry)
+        except ValueError:
+            rejects["generation:query_gen"] += 1; continue
+        ans = gen_answer(client, chunks, q, dry, refuse=unanswerable)
+        refused = "記載がありません" in ans
+        if refused != unanswerable:                # 回答可能性と実回答の不整合は棄却
+            rejects["generation:answerability_mismatch"] += 1; continue
+        # 忠実性ゲート(報酬と同一関数)。記載なし回答は引用なしでも可、引用があるなら正しいこと
+        cite_ok = source_exists(ans, labels) >= 1.0 or (refused and "【出典:" not in ans)
+        if not cite_ok:
             rejects["generation:source_exists"] += 1; continue
         items.append({"input": {"question": q, "chunks": chunks}, "label": ans,
-                      "meta": {"task": "generation", "category": "grounded_qa",
+                      "meta": {"task": "generation",
+                               "category": "unanswerable" if unanswerable else "grounded_qa",
                                "difficulty": "normal", "teacher": TEACHER}})
 
     items = dedup(items)
@@ -163,6 +193,9 @@ if __name__ == "__main__":
     p.add_argument("--heldout-ratio", type=float, default=0.1)
     p.add_argument("--n-analysis", type=int, default=300)
     p.add_argument("--n-generation", type=int, default=100)
+    p.add_argument("--gen-chunks", type=int, default=2,
+                   help="生成タスクのチャンク数(SFT seq2048に収める: 2×700字+システム+回答で概ね上限)")
+    p.add_argument("--chunk-chars", type=int, default=700)
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args()
-    main(a.inp, a.out, a.heldout_ratio, a.n_analysis, a.n_generation, a.dry_run)
+    main(a.inp, a.out, a.heldout_ratio, a.n_analysis, a.n_generation, a.gen_chunks, a.chunk_chars, a.dry_run)
