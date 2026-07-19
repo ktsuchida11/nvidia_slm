@@ -112,7 +112,9 @@ def main():
         log.error("OPENAI_BASE_URL が未設定(liveモード)"); sys.exit(1)
 
     sums, counts = {}, {}
-    for it in items:
+    cat_sums: dict[str, dict] = {}
+    details = []
+    for idx, it in enumerate(items):
         task = it["meta"]["task"]
         if task == "analysis":
             pred = json.dumps(it["label"], ensure_ascii=False) if a.mode == "dry" else \
@@ -127,14 +129,31 @@ def main():
             m = eval_generation(it, strip_reasoning(pred) if isinstance(pred, str) else pred)
         for k, v in m.items():
             sums[k] = sums.get(k, 0.0) + v; counts[k] = counts.get(k, 0) + 1
+        cat = f'{task}/{it["meta"].get("category", "?")}'
+        cs = cat_sums.setdefault(cat, {"n": 0})
+        cs["n"] += 1
+        for k, v in m.items():
+            cs[k] = cs.get(k, 0.0) + v
+        # 失敗内訳分析用のper-item記録(ループ2で集計値しか残らず内訳不明だった教訓)
+        details.append({"i": idx, "task": task, "category": it["meta"].get("category"),
+                        "metrics": m,
+                        "input": (it["input"] if task == "analysis" else it["input"]["question"]),
+                        "gold": it["label"] if task == "analysis" else None,
+                        "pred": pred if isinstance(pred, str) else None})
 
     means = {k: round(sums[k] / counts[k], 4) for k in sums}
+    by_category = {c: {k: (v if k == "n" else round(v / cs["n"], 4)) for k, v in cs.items()}
+                   for c, cs in cat_sums.items()}
     verdict = {k: (means.get(k, 0.0) >= th) for k, th in thresholds.items()}
     report = {"tag": a.tag, "mode": a.mode, "n": len(items), "metrics": means,
+              "by_category": by_category,
               "thresholds": thresholds, "pass": all(verdict.values()) if verdict else None,
               "verdict": verdict}
     out_p = pathlib.Path(a.out); out_p.mkdir(parents=True, exist_ok=True)
     (out_p / f"eval_{a.tag}.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    with (out_p / f"eval_{a.tag}_details.jsonl").open("w", encoding="utf-8") as w:
+        for d in details:
+            w.write(json.dumps(d, ensure_ascii=False) + "\n")
     log.info("report: %s", json.dumps(report, ensure_ascii=False))
     sys.exit(0 if report["pass"] in (True, None) else 2)
 
