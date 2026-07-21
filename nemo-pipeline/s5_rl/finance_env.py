@@ -102,6 +102,25 @@ try:
                 answers=answers,
             )
 
+        def global_post_process_and_metrics(
+            self, batch: Any
+        ) -> tuple[Any, dict[str, float | int]]:
+            """全rolloutバッチのメトリクス集計（v0.6.0 EnvironmentInterface の抽象メソッド。
+            未実装だと ray.remote のActor化が TypeError で失敗する — 実機ループ8で発現）。
+            集計流儀は同版 math_environment.py を踏襲: 途中切断(is_end=0)は報酬0扱いで平均。"""
+            rewards = (
+                batch["rewards"] if batch["rewards"].ndim == 1 else batch["rewards"][:, 0]
+            )
+            if "is_end" in batch:
+                rewards = rewards * batch["is_end"]
+            metrics = {
+                "mean_reward": rewards.mean().item(),
+                "frac_full_reward": (rewards >= 0.999).float().mean().item(),
+                "frac_no_reward": (rewards <= 0.0).float().mean().item(),
+                "num_samples": len(rewards),
+            }
+            return batch, metrics
+
         def global_post_init_hook(self, *args: Any, **kwargs: Any) -> None:
             pass
 
