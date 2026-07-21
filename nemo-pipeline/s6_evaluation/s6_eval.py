@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse, json, logging, os, pathlib, sys, time, urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "common"))
-from reward import source_exists, citation_format
+from reward import source_exists, citation_format, refusal_without_citation
 from schema import validate_analysis
 from prompts import LABEL_SYS, ANSWER_SYS, format_today
 
@@ -87,6 +87,10 @@ def eval_analysis(item: dict, pred_raw: str) -> dict:
 
 def eval_generation(item: dict, pred: str) -> dict:
     labels = [c["label"] for c in item["input"]["chunks"]]
+    # unanswerableへの出典なし拒否は蒸留ゲートと同じく満点(reward.pyの述語を共有)。
+    # カテゴリで限定し、grounded_qaの「拒否で逃げる」出力は従来通り0点のまま
+    if item["meta"].get("category") == "unanswerable" and refusal_without_citation(pred):
+        return {"source_exists": 1.0, "citation_format": 1.0}
     return {"source_exists": source_exists(pred, labels), "citation_format": citation_format(pred)}
 
 def main():
