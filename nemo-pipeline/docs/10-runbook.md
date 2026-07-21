@@ -91,7 +91,10 @@ OPENAI_BASE_URL=http://localhost:8002/v1 make eval TAG=sft
 OPENAI_BASE_URL=http://localhost:8002/v1 make eval TAG=grpo
 ls results/eval_*.json     # base/sft/grpo を横並びで見る
 ```
-✅ 合格基準（eval.yaml）: schema_valid=100% / analysis_match≥0.85 / source_exists=100% / citation≥0.95。
+✅ 合格基準（eval.yaml）: 絶対=schema_valid=100% / source_exists=100% / citation≥0.95、
+   相対=analysis_match≥ベースライン実測（設計原典 docs/01-plan.md。`make eval TAG=grpo8 BASELINE=base8` の形で指定。
+   旧絶対閾値0.85は根拠なし+評価n=28では1件=3.6ptで判別不能のため参考値に降格 — ループ8）。
+   評価母数は heldout.jsonl（不可侵）+ heldout_ext.jsonl（`make eval-augment` で追加・学習不使用）。
    exit=0 なら次へ。exit=2 なら前段（データ量/報酬/学習設定）に戻る。
 
 ## Step 7. S7 ガードレール作成 → 検証

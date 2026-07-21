@@ -4,12 +4,17 @@ endpoint:
   model: nemotron-gen              # Nemotron生成モデル（vLLM配信）。解析評価時は該当モデル名に
 suites:
   - name: heldout_task              # 合否判定の主役（S2が出力した評価専用セット）
-    path: /data/distilled/heldout.jsonl
-    thresholds:                     # 満たせない場合 exit 2（前段に戻る）
-      schema_valid: 1.0
-      analysis_match: 0.85
-      source_exists: 1.0
-      citation_format: 0.95
+    path:                           # 複数可: heldout本体(不可侵) + 評価専用増強(make eval-augment)
+      - /data/distilled/heldout.jsonl
+      - /data/distilled/heldout_ext.jsonl
+    thresholds:                     # 絶対基準（設計原典 docs/01-plan.md に根拠あり）。未達で exit 2
+      schema_valid: 1.0             # スキーマ100%（プラン明記）
+      source_exists: 1.0            # 出典実在100%=ゲート（プラン明記）
+      citation_format: 0.95         # 出典≥95%（プラン明記）
+    baseline_thresholds:            # 相対基準（プラン明記は「analysis_match ≥ base」。値=マージン、0.0=非退行で合格）
+      analysis_match: 0.0           # --baseline <tag> / make eval BASELINE=<tag> で有効化
+    reference:                      # 参考表示のみ・非ゲート
+      analysis_match: 0.85          # 旧絶対閾値。根拠なし+n=28では1件=3.6ptで判別不能だったため降格（ループ8）
   # 参考ベンチ（学習に使わない・別途 NeMo Evaluator/lm-eval で実行）
   # - name: jp_finance
   #   tasks: [japanese_lm_fin_harness]
