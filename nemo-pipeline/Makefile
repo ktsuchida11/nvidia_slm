@@ -90,6 +90,9 @@ lint-labels:         ## S2 ゴールド規約リント（API不要。違反一�
 relabel-lint:        ## S2 リント違反ゴールドのみ教師で再ラベル（要ANTHROPIC_API_KEY。先に make lint-labels）
 	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
 	  python /pipeline/s2_distillation/s2_distill.py --in /data/curated --out /data/distilled --relabel --only-lint"
+augment:             ## S2 的絞りデータ増強（不足パターンをtrain/validへ追記。heldout不可侵。要ANTHROPIC_API_KEY）
+	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
+	  python /pipeline/s2_distillation/s2_distill.py --in /data/curated --out /data/distilled --augment"
 distill-dry:         ## S2 配管検証（API不要・数秒）
 	$(RUN) $(PY_IMG) python /pipeline/s2_distillation/s2_distill.py \
 	  --in /data/curated --out /data/distilled --dry-run \
