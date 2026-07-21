@@ -21,10 +21,18 @@ if env_dir not in sys.path:
     sys.path.insert(0, env_dir)
 os.environ["PYTHONPATH"] = env_dir + os.pathsep + os.environ.get("PYTHONPATH", "")
 
+from nemo_rl.distributed.ray_actor_environment_registry import ACTOR_ENVIRONMENT_REGISTRY  # noqa: E402
+from nemo_rl.distributed.virtual_cluster import PY_EXECUTABLES  # noqa: E402
 from nemo_rl.environments.utils import ENV_REGISTRY, register_env  # noqa: E402
 
 if "finance_grounding" not in ENV_REGISTRY:
     register_env("finance_grounding", "finance_env.FinanceGroundingEnvironment")
+
+# v0.6.0: カスタムActorはPython実行環境の登録も必須（無いと create_env が
+# get_actor_python_env で ValueError — 実機ループ8で発現）。
+# 報酬は正規表現+標準ライブラリのみで特殊依存なし → SYSTEM（ドライバと同じ環境）
+ACTOR_ENVIRONMENT_REGISTRY.setdefault(
+    "finance_env.FinanceGroundingEnvironment", PY_EXECUTABLES.SYSTEM)
 
 # NeMo-RLリポのルート（examples/ がある場所）から実行される前提
 run_grpo = pathlib.Path("examples/run_grpo.py")
