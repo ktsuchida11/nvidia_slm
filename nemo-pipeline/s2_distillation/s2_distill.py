@@ -31,6 +31,24 @@ CAT_HINT = {
     "ambiguous": "曖昧・フィルタ無し。例:「最近どう？」「何か注目ある？」",
     "edge": "エッジ: 存在しないセクター/古すぎる日付/レポート外の話題",
 }
+# ループ7の的絞り増強: SFTが訓練分布の疑似相関を増幅する(ループ3・4・6で再現)ため、
+# 不足パターンの訓練例をtrain/validにのみ追記して増幅方向を反転させる。
+# 件数は過学習を避けるため控えめ(計45件≒trainの15%)。categoryは既存分類に
+# 合わせて評価のby_category集計と揃え、由来はmeta.augmentで追跡する
+AUGMENT_PATTERNS = {
+    "summary_dated": {"category": "summary", "n": 15,
+                      # 既存summaryはほぼ日付なし(date_range=null)のみ→「summary=null」疑似相関の源
+                      "hint": "「本日」「今日」「昨日」「先週」など日付・期間の言葉を必ず含む全体要約。"
+                              "例:「本日の相場全体をまとめて」「先週のマーケット総括は？」"},
+    "week_range": {"category": "trend", "n": 15,
+                   # 「今週」は訓練に2件のみで規約(3)の月曜始まりが上書きできなかった
+                   "hint": "「今週」という言葉を必ず含む期間トレンド。"
+                           "例:「今週の金の動きは？」「今週に入ってからの原油はどう？」"},
+    "comparison_pair": {"category": "comparison", "n": 15,
+                        # 商品名ペア比較でsectors=["overall"]逃げが再発した
+                        "hint": "セクター名ではなく具体的な商品名2つの比較。"
+                                "例:「金と原油はどちらが上がった？」「銅と天然ガスの値動きを比べて」"},
+}
 
 
 # ---- 教師API -----------------------------------------------------------------
@@ -52,14 +70,14 @@ def extract_json(text: str) -> dict:
 
 
 # ---- 生成器 ------------------------------------------------------------------
-def gen_queries(client, cat: str, n: int, dry: bool) -> list[str]:
+def gen_queries(client, cat: str, n: int, dry: bool, hint: str | None = None) -> list[str]:
     if dry:
         return [f"[{cat}] ダミー質問{i}: 原油の見通しは？" for i in range(n)]
     out: list[str] = []
     while len(out) < n:
         batch = min(20, n - len(out))
         txt = call_teacher(client, SYN_QUERY_SYS,
-                           f"カテゴリ「{cat}」({CAT_HINT[cat]}) の質問を{batch}個。互いに表現・商品・言い回しを変えること。")
+                           f"カテゴリ「{cat}」({hint or CAT_HINT[cat]}) の質問を{batch}個。互いに表現・商品・言い回しを変えること。")
         out += [l.strip() for l in txt.splitlines() if l.strip()][:batch]
     return out[:n]
 
@@ -161,6 +179,63 @@ def relabel_splits(client, out_p: pathlib.Path, today: str, dry: bool,
         json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
     return stats
 
+def augment_splits(client, out_p: pathlib.Path, today: str, dry: bool,
+                   rng: random.Random) -> dict:
+    """的絞りデータ増強(ループ7): AUGMENT_PATTERNSの質問を教師生成→現行規約でラベル→
+    リント合格分のみを train/valid に90/10で追記する。heldoutは重複排除の参照のみで
+    一切書き換えない(評価専用・不可侵)。基準日は既存itemのlabel_todayに揃えること
+    (mainで整合検証済み。混在するとs6_evalが実行日フォールバックしゴールドが崩れる)。"""
+    backup = out_p / "pre-augment-backup"
+    backup.mkdir(exist_ok=True)
+    splits: dict[str, list[dict]] = {}
+    seen: set[str] = set()   # 全split(heldout含む)との重複を排除 — heldout類似問の混入防止
+    for name in ["train", "valid", "heldout"]:
+        p = out_p / f"{name}.jsonl"
+        items = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+        splits[name] = items
+        seen |= {dedup_key(it["input"]) for it in items}
+        if name != "heldout":
+            (backup / f"{name}.jsonl").write_text(
+                "".join(json.dumps(it, ensure_ascii=False) + "\n" for it in items), encoding="utf-8")
+
+    stats: dict = {"today": today, "added": {}, "rejects": {}}
+    for pat, spec in AUGMENT_PATTERNS.items():
+        added: list[dict] = []
+        rejects: Counter = Counter()
+        for q in gen_queries(client, pat, spec["n"], dry, hint=spec["hint"]):
+            k = dedup_key(q)
+            if k in seen:
+                rejects["dup"] += 1; continue
+            try:
+                label = label_query(client, q, today, dry)
+            except (ValueError, json.JSONDecodeError) as e:
+                rejects[f"label:{type(e).__name__}"] += 1; continue
+            # 増強の目的はゴールド分布の矯正なので、規約違反ラベルは即棄却(再ラベル不要に保つ)。
+            # dryのダミーラベルは配管検証用のためリント対象外
+            codes = lint_label(q, label, today)
+            if codes and not dry:
+                rejects["lint:" + ",".join(codes)] += 1; continue
+            seen.add(k)
+            added.append({"input": q, "label": label,
+                          "meta": {"task": "analysis", "category": spec["category"],
+                                   "difficulty": "normal", "teacher": TEACHER,
+                                   "label_today": today, "augment": pat}})
+        rng.shuffle(added)
+        nv = max(1, int(len(added) * 0.1)) if added else 0
+        splits["valid"] += added[:nv]
+        splits["train"] += added[nv:]
+        stats["added"][pat] = {"total": len(added), "train": len(added) - nv, "valid": nv}
+        stats["rejects"][pat] = dict(rejects)
+        log.info("augment %s: 追加%d件 (train %d / valid %d) 棄却%s",
+                 pat, len(added), len(added) - nv, nv, dict(rejects))
+
+    for name in ["train", "valid"]:      # heldoutは書き換えない
+        (out_p / f"{name}.jsonl").write_text(
+            "".join(json.dumps(it, ensure_ascii=False) + "\n" for it in splits[name]), encoding="utf-8")
+    (out_p / "augment_stats.json").write_text(
+        json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
+    return stats
+
 
 # ---- 分割・出力 ---------------------------------------------------------------
 def stratified_split(items: list[dict], heldout: float, rng: random.Random):
@@ -174,27 +249,29 @@ def stratified_split(items: list[dict], heldout: float, rng: random.Random):
         hold += group[:nh]; valid += group[nh:nh+nv]; train += group[nh+nv:]
     return train, valid, hold
 
+def dedup_key(inp) -> str:
+    src = inp if isinstance(inp, str) else json.dumps(inp, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(re.sub(r"\s+", "", src).encode()).hexdigest()
+
 def dedup(items: list[dict]) -> list[dict]:
     seen, out = set(), []
     for it in items:
-        src = it["input"] if isinstance(it["input"], str) \
-              else json.dumps(it["input"], ensure_ascii=False, sort_keys=True)
-        k = hashlib.sha1(re.sub(r"\s+", "", src).encode()).hexdigest()
+        k = dedup_key(it["input"])
         if k in seen: continue
         seen.add(k); out.append(it)
     return out
 
 def main(inp: str, out: str, heldout_ratio: float, n_analysis: int, n_generation: int,
          gen_chunks: int, chunk_chars: int, dry: bool, relabel: bool = False,
-         lint: bool = False, only_lint: bool = False, today_arg: str | None = None):
+         lint: bool = False, only_lint: bool = False, today_arg: str | None = None,
+         augment: bool = False):
     rng = random.Random(42)
     out_p = pathlib.Path(out); out_p.mkdir(parents=True, exist_ok=True)
     today = today_arg or time.strftime("%Y-%m-%d")
 
-    # リント・部分再ラベルの基準日は既存データの label_today に揃える。
-    # 部分再ラベルで基準日が混在すると s6_eval が実行日フォールバックし
-    # 相対日付ゴールドが崩れる
-    if lint or (relabel and only_lint):
+    # リント・部分再ラベル・増強の基準日は既存データの label_today に揃える。
+    # 基準日が混在すると s6_eval が実行日フォールバックし相対日付ゴールドが崩れる
+    if lint or augment or (relabel and only_lint):
         lts: set = set()
         for name in ["train", "valid", "heldout"]:
             p = out_p / f"{name}.jsonl"
@@ -218,6 +295,8 @@ def main(inp: str, out: str, heldout_ratio: float, n_analysis: int, n_generation
 
     only = None
     n_teacher = n_analysis
+    if augment:
+        n_teacher = sum(spec["n"] for spec in AUGMENT_PATTERNS.values())
     if relabel and only_lint:
         rp = out_p / "lint_report.json"
         if not rp.exists():
@@ -234,8 +313,13 @@ def main(inp: str, out: str, heldout_ratio: float, n_analysis: int, n_generation
             log.error("ANTHROPIC_API_KEY 未設定。配管確認だけなら --dry-run"); sys.exit(1)
         import anthropic
         client = anthropic.Anthropic()
-        est = (n_teacher * 0.6) if relabel else (n_teacher * 0.6 + n_generation * 2.2)  # kトークン概算/件
+        est = (n_teacher * 0.6) if (relabel or augment) else (n_teacher * 0.6 + n_generation * 2.2)  # kトークン概算/件
         log.info("概算教師コスト: ~$%.1f (入出力%.0fKtok想定・実測で要確認)", est * 0.015, est)
+
+    if augment:
+        augment_splits(client, out_p, today, dry, rng)
+        log.info("★ train/valid が変わったため prep-rl の再実行が必要(heldoutは不変・再評価はbaseから)")
+        return
 
     if relabel:
         relabel_splits(client, out_p, today, dry, only)
@@ -316,6 +400,8 @@ if __name__ == "__main__":
                    help="--relabel と併用: lint_report.json の違反itemのみ再ラベル")
     p.add_argument("--today", default=None,
                    help="基準日の上書き(YYYY-MM-DD)。既定: 既存label_today→実行日")
+    p.add_argument("--augment", action="store_true",
+                   help="的絞りデータ増強: AUGMENT_PATTERNSの新規analysis例をtrain/validにのみ追記(heldout不可侵)")
     a = p.parse_args()
     main(a.inp, a.out, a.heldout_ratio, a.n_analysis, a.n_generation, a.gen_chunks, a.chunk_chars,
-         a.dry_run, a.relabel, a.lint, a.only_lint, a.today)
+         a.dry_run, a.relabel, a.lint, a.only_lint, a.today, a.augment)
