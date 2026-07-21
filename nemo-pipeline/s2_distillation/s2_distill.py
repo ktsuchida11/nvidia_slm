@@ -10,7 +10,7 @@ import argparse, hashlib, json, logging, os, pathlib, random, re, sys, time
 from collections import Counter
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "common"))
-from reward import source_exists   # 単一の忠実性概念を蒸留品質ゲートでも共有
+from reward import source_exists, refusal_without_citation   # 単一の忠実性概念を蒸留品質ゲートでも共有
 from schema import validate_analysis
 from prompts import SECTORS, SYN_QUERY_SYS, CHUNK_QUERY_SYS, LABEL_SYS, ANSWER_SYS, format_today
 from label_lint import lint_label
@@ -277,7 +277,7 @@ def main(inp: str, out: str, heldout_ratio: float, n_analysis: int, n_generation
         if refused != unanswerable:                # 回答可能性と実回答の不整合は棄却
             rejects["generation:answerability_mismatch"] += 1; continue
         # 忠実性ゲート(報酬と同一関数)。記載なし回答は引用なしでも可、引用があるなら正しいこと
-        cite_ok = source_exists(ans, labels) >= 1.0 or (refused and "【出典:" not in ans)
+        cite_ok = source_exists(ans, labels) >= 1.0 or refusal_without_citation(ans)
         if not cite_ok:
             rejects["generation:source_exists"] += 1; continue
         items.append({"input": {"question": q, "chunks": chunks}, "label": ans,

@@ -17,6 +17,14 @@ def source_exists(ans: str, chunk_labels: list[str]) -> float:
     cited = re.findall(r"【出典:\s*([^】]+)】", ans)
     return 1.0 if cited and all(c.strip() in chunk_labels for c in cited) else 0.0
 
+def refusal_without_citation(ans: str) -> bool:
+    """「レポートに記載がありません」拒否は出典なしでも忠実とみなす。
+    蒸留の品質ゲート(s2)は出典なし拒否を許容する一方、評価(s6)が全回答に出典を
+    要求し、unanswerableへの正しい拒否が0点になる非対称があった(ループ4所見4)。
+    両者でこの述語を共有して整合させる。判定はunanswerable文脈に限って使うこと
+    (grounded_qaにも適用すると「常に拒否」で満点が取れてしまう)"""
+    return "記載がありません" in ans and "【出典:" not in ans
+
 def penalty(ans: str) -> float:
     if not ans.strip():
         return -1.0
