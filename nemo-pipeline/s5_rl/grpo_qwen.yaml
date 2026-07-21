@@ -250,7 +250,7 @@ policy:
       tensor_parallel_size: 1
       pipeline_parallel_size: 1
       expert_parallel_size: 1
-      gpu_memory_utilization: 0.4
+      gpu_memory_utilization: 0.6  # 0.4は9B重み(~18GB)でKVブロック確保不能(実機エラー)。v0.6.0 colocatedはsleep modeで学習中vLLMが退避するため生成フェーズ基準でよい(公式8B参照configと同値)
       max_model_len: ${policy.max_total_sequence_length}
       enforce_eager: false
       use_deep_gemm: false
