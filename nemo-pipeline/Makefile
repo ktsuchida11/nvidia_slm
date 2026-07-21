@@ -32,7 +32,7 @@ MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 # データビューア用ポート（衝突時は hostpath.mk で上書き）
 VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch curate distill relabel lint-labels relabel-lint distill-dry dapt sft grpo convert-sft serve-sft eval eval-dry guardrails guardrails-test tracking tensorboard viewer clean
+.PHONY: setup extract caption fetch curate distill relabel lint-labels relabel-lint distill-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry guardrails guardrails-test tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -118,6 +118,11 @@ convert-sft:         ## SFTチェックポイント(DCP+LoRA)→HF形式へ変�
 	  -v $${HF_HOME:-$$HOME/.cache/huggingface}:/root/.cache/huggingface \
 	  $(RL_IMG) bash /pipeline/s4_sft/convert_sft_to_hf.sh $(STEP)
 
+convert-grpo:        ## GRPOチェックポイント(LoRA)→HF形式へ変換・マージ（ベースはckptのconfig.yaml記載のmodel_name=/ckpt/sft/hf）
+	$(RUN) -e HF_TOKEN -e HUGGING_FACE_HUB_TOKEN=$(HF_TOKEN) -e CKPT_ROOT=/ckpt/grpo \
+	  -v $${HF_HOME:-$$HOME/.cache/huggingface}:/root/.cache/huggingface \
+	  $(RL_IMG) bash /pipeline/s4_sft/convert_sft_to_hf.sh $(STEP)
+
 serve-sft:           ## SFT済みモデル配信（vLLM）:8002。要 make convert-sft 済み
 	docker run --rm -d --name llm-gen $(GPU) --ipc=host \
 	  -p 127.0.0.1:8002:8000 -e HUGGING_FACE_HUB_TOKEN=$(HF_TOKEN) \
@@ -128,6 +133,17 @@ serve-sft:           ## SFT済みモデル配信（vLLM）:8002。要 make conve
 	  --host 0.0.0.0 --port 8000 --trust-remote-code --mamba_ssm_cache_dtype float32 \
 	  --max-num-seqs 64 --max-model-len 131072
 	@echo "起動確認: docker logs -f llm-gen → 'Application startup complete' 後に make eval TAG=sft"
+
+serve-grpo:          ## GRPO済みモデル配信（vLLM）:8002。要 make convert-grpo 済み
+	docker run --rm -d --name llm-gen $(GPU) --ipc=host \
+	  -p 127.0.0.1:8002:8000 -e HUGGING_FACE_HUB_TOKEN=$(HF_TOKEN) \
+	  -v $${HF_HOME:-$$HOME/.cache/huggingface}:/root/.cache/huggingface \
+	  -v $(HOST_PWD)/checkpoints:/ckpt \
+	  vllm/vllm-openai:latest \
+	  --model /ckpt/grpo/hf --served-model-name nemotron-gen \
+	  --host 0.0.0.0 --port 8000 --trust-remote-code --mamba_ssm_cache_dtype float32 \
+	  --max-num-seqs 64 --max-model-len 131072
+	@echo "起動確認: docker logs -f llm-gen → 'Application startup complete' 後に make eval TAG=grpo"
 
 serve:               ## （任意・代替）GGUF対応モデル(Qwen等)用のllama.cpp配信。既定Nemotronは serve-nemotron を使う
 	docker run --rm -d --name llm-$(or $(ALIAS),qwen3-gen) $(GPU) \
@@ -158,13 +174,14 @@ sft:                 ## S4 SFT/LoRA（NeMo-RL: examples/run_sft.py + s4_sft/sft_
 	  -e RAY_memory_monitor_refresh_ms=0 \
 	  -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 	  $(RL_IMG) bash /pipeline/s4_sft/run_sft.sh
-grpo:                ## S5 GRPO（NeMo-RL + カスタム報酬環境 finance_grounding。OOM時 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64）
+GRPO_CFG ?= grpo_qwen.yaml
+grpo:                ## S5 GRPO（NeMo-RL + カスタム報酬環境。analysis用は GRPO_CFG=grpo_analysis.yaml。OOM時 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64）
 	$(RUN) $(GPU) $(TRACK) --shm-size=32g -e PIPELINE_DIR=/pipeline $(RL_IMG) bash -lc \
 	  "if [ -d /opt/nemo-rl/examples ]; then cd /opt/nemo-rl; \
 	   elif [ -d /pipeline/vendor/RL ]; then cd /pipeline/vendor/RL; \
 	   else git clone --depth 1 --recursive --branch $(RL_REF) https://github.com/NVIDIA-NeMo/RL /rl && cd /rl; fi && \
 	   PYTHONPATH=/pipeline/s5_rl:$$PYTHONPATH \
-	   uv run /pipeline/s5_rl/run_grpo_finance.py --config /pipeline/s5_rl/grpo_qwen.yaml"
+	   uv run /pipeline/s5_rl/run_grpo_finance.py --config /pipeline/s5_rl/$(GRPO_CFG)"
 vendor-rl:           ## 閉域準備: NeMo-RLをリポ内に取り込み（--recursiveでsubmodule込み・オンライン環境で一度）
 	git clone --depth 1 --recursive https://github.com/NVIDIA-NeMo/RL vendor/RL
 
