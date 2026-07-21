@@ -4,6 +4,7 @@
   sft_analysis_{train,valid}.jsonl   {"input": 質問文, "output": ラベルJSON文字列}
   sft_generation_{train,valid}.jsonl {"input": ctx+質問, "output": 出典付き回答}
   grpo_generation_train.jsonl        {"input": ctx+質問, "ground_truth": {"chunk_labels":[...]} のJSON}
+  grpo_analysis_train.jsonl          {"input": 質問文, "ground_truth": {"label": ゴールドラベル} のJSON}
   prompts/label_sys.txt, answer_sys.txt  （system_prompt_file 用。s6_eval と同一のプロンプト）
 
 プロンプト描画は s6_evaluation/s6_eval.py と完全一致させる（学習と評価の整合が目的）:
@@ -26,6 +27,7 @@ def convert(split_path: pathlib.Path, out_dir: pathlib.Path, split: str, with_gr
     fa = open(out_dir / f"sft_analysis_{split}.jsonl", "w", encoding="utf-8")
     fg = open(out_dir / f"sft_generation_{split}.jsonl", "w", encoding="utf-8")
     fr = open(out_dir / "grpo_generation_train.jsonl", "w", encoding="utf-8") if with_grpo else None
+    fra = open(out_dir / "grpo_analysis_train.jsonl", "w", encoding="utf-8") if with_grpo else None
     for line in open(split_path, encoding="utf-8"):
         if not line.strip():
             continue
@@ -35,6 +37,11 @@ def convert(split_path: pathlib.Path, out_dir: pathlib.Path, split: str, with_gr
             fa.write(json.dumps({"input": rec["input"],
                                  "output": json.dumps(rec["label"], ensure_ascii=False)},
                                 ensure_ascii=False) + "\n")
+            if fra is not None:
+                fra.write(json.dumps({"input": rec["input"],
+                                      "ground_truth": json.dumps({"label": rec["label"]},
+                                                                 ensure_ascii=False)},
+                                     ensure_ascii=False) + "\n")
             stats["analysis"] += 1
         elif task == "generation":
             q = rec["input"]["question"]
@@ -50,7 +57,7 @@ def convert(split_path: pathlib.Path, out_dir: pathlib.Path, split: str, with_gr
             stats["generation"] += 1
         else:
             stats["skipped"] += 1
-    for f in (fa, fg, fr):
+    for f in (fa, fg, fr, fra):
         if f:
             f.close()
     return stats

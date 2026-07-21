@@ -34,3 +34,25 @@ def penalty(ans: str) -> float:
 
 def reward_generation(ans: str, chunk_labels: list[str]) -> float:
     return 0.5 * source_exists(ans, chunk_labels) + 0.2 * citation_format(ans) + penalty(ans)
+
+def _extract_json(text: str) -> dict:
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m: raise ValueError("no json")
+    return json.loads(m.group(0))
+
+def reward_analysis(ans: str, gold: dict) -> float:
+    """解析タスクの検証可能報酬。一致判定は s6_eval.eval_analysis と同一
+    (sectors=集合一致 / query_type・date_range=完全一致)。date_range を最重み(0.5)に
+    する — ループ7時点で残failure 5件中3件が date_range 起因(曜日計算・今週開始・
+    summary+本日→null)で、SFTの模倣学習では上書きできないと確定したため(ループ8の1変更)。"""
+    from schema import validate_analysis  # 同ディレクトリ。呼び出し側のsys.path設定後に解決するため遅延import
+    base = penalty(ans)
+    try:
+        pred = validate_analysis(_extract_json(ans))
+    except Exception:
+        return base                      # schema不成立は加点なし
+    r = 0.2                              # schema_valid
+    r += 0.15 if set(pred["sectors"]) == set(gold["sectors"]) else 0.0
+    r += 0.15 if pred["query_type"] == gold["query_type"] else 0.0
+    r += 0.5 if pred["date_range"] == gold["date_range"] else 0.0
+    return r + base

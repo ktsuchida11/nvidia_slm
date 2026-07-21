@@ -1,22 +1,22 @@
-# S5 GRPO — NeMo-RL用設定（run_grpo_finance.py 経由で実行。報酬=finance_grounding環境）
-# キー構造は NVIDIA-NeMo/RL examples/configs/grpo_math_1B.yaml / grpo_math_8B.yaml
-# （2026-07時点 main）を正として作成。48GB×1（Route 48GB）を既定プロファイルとする。
-# ★実機確認事項:
-#  - RL_IMG のタグ（NGCカタログで確認。Nemotron系は nemo-rl:v0.4.0.nemotron_3_nano 系列あり）
-#  - data.default.processor（ResponseDataset+ground_truth の既定処理でmetadataに
-#    ground_truth が渡ること。渡らなければ math_hf_data_processor 相当を指定）
-#  - Nemotron-H(Mamba)を直接GRPOする場合は vLLM>=0.17 または
-#    grpo.seq_logprob_error_threshold: 2 を設定（NeMo-RL docs/guides/nemotron-3-nano.md）
+# S5 GRPO — analysis(ラベルJSON)タスク用設定（ループ8の1変更）。
+# grpo_qwen.yaml（generation用）のコピーを基に、次の差分のみ変更:
+#   - data: grpo_analysis_train.jsonl + label_sys.txt（システムプロンプト=学習/評価と同一）
+#   - policy.model_name: /ckpt/sft/hf（convert-sft のマージ済みHF。/ckpt/sft 直下はDCPで直接読めない）
+#   - generation.max_new_tokens: 400（s6_eval の analysis max_tokens と同一予算）
+#   - grpo.max_num_steps: 40 / max_num_epochs: 2（小規模プローブ。~300件×16prompts/step≒19step/epoch）
+# 報酬 = 0.2*schema + 0.15*sectors + 0.15*query_type + 0.5*date_range + penalty
+# （finance_env.py が ground_truth の "label" キーで analysis 報酬に振り分ける）
+# ★実機確認事項は grpo_qwen.yaml と同一（RL_IMGタグ / ResponseDataset→metadata受け渡し）
 grpo:
   num_prompts_per_step: 16
-  num_generations_per_prompt: 8    # 旧 num_generations:8 相当。OOM時の絞りノブ①: 8→4
+  num_generations_per_prompt: 8    # OOM時の絞りノブ①: 8→4
   max_rollout_turns: 1
-  max_num_epochs: 1
-  max_num_steps: 500
+  max_num_epochs: 2
+  max_num_steps: 40                # 小規模プローブ（train:reward が動かなければ次周でlr等を1変更）
   normalize_rewards: true
   use_leave_one_out_baseline: true
   val_period: 10
-  val_at_start: false
+  val_at_start: true               # 開始時点の報酬を基準線として記録（プローブ判定用）
   max_val_samples: 64
   val_batch_size: 64
   seed: 42
@@ -39,9 +39,7 @@ checkpointing:
   save_optimizer: true
 
 policy:
-  # SFT成果から開始。まず4Bで配管・報酬検証→9Bへ（docs/00の順）。
-  # 9B GRPOは48GB単体では不足（~50-60GB）→ Unslothルート or L40S×4（docs/00）。
-  model_name: /ckpt/sft/hf         # convert-sft のマージ済みHF（/ckpt/sft直下はDCPで不可）。または HF id（4B検証時: Qwen/Qwen3-4B-Instruct-2507 等）
+  model_name: /ckpt/sft/hf         # ループ7 SFT成果（LoRAマージ済みHF）から開始
   tokenizer:
     name: ${policy.model_name}
     chat_template_kwargs: null
@@ -104,7 +102,7 @@ policy:
 
   generation:
     backend: "vllm"
-    max_new_tokens: 512            # 生成タスク向け。絞りノブ②: 512→384
+    max_new_tokens: 400            # s6_eval の analysis 予算と同一
     temperature: 1.0
     top_p: 1.0
     top_k: null
@@ -128,21 +126,21 @@ data:
   shuffle: true
   num_workers: 1
   train:
-    # prep_rl_data.py の出力。ground_truth に {"chunk_labels": [...]} のJSON文字列
+    # prep_rl_data.py の出力。ground_truth に {"label": {...}} のJSON文字列
     dataset_name: ResponseDataset
-    data_path: /data/distilled/rl/grpo_generation_train.jsonl
+    data_path: /data/distilled/rl/grpo_analysis_train.jsonl
     input_key: input
     split_validation_size: 0.05    # train内から5%をGRPO用valに（heldoutは使わない・不可侵）
     seed: ${grpo.seed}
   validation: null
   default:
     prompt_file: null
-    system_prompt_file: /data/distilled/rl/prompts/answer_sys.txt
-    env_name: "finance_grounding"  # run_grpo_finance.py が register_env する
+    system_prompt_file: /data/distilled/rl/prompts/label_sys.txt
+    env_name: "finance_grounding"  # run_grpo_finance.py が register_env する（analysis報酬へは gt キーで振り分け）
 
 env:
   finance_grounding:
-    num_workers: 2                 # 報酬は正規表現のみで軽量
+    num_workers: 2                 # 報酬は正規表現+JSONパースのみで軽量
 
 logger:                            # クローズド網: 外部SaaSなし（W&B不使用）
   log_dir: /results/logs/grpo
@@ -156,7 +154,7 @@ logger:                            # クローズド網: 外部SaaSなし（W&B�
     log_dir: /results/tb/grpo
   mlflow:
     experiment_name: nemo-rl-grpo
-    run_name: grpo-finance
+    run_name: grpo-analysis
     tracking_uri: ${oc.env:MLFLOW_TRACKING_URI,http://host.docker.internal:5000}
   gpu_monitoring:
     collection_interval: 10

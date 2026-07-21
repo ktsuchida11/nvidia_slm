@@ -4,10 +4,13 @@
 interfaces.EnvironmentReturn（2026-07時点 main）を正として実装。
 登録は run_grpo_finance.py が register_env("finance_grounding", ...) で行う。
 
-データ契約（prep_rl_data.py が生成する grpo_generation_train.jsonl）:
-  metadata["ground_truth"] = '{"chunk_labels": ["sample.jsonl#0", ...]}' (JSON文字列)
+データ契約（prep_rl_data.py が生成する grpo_*_train.jsonl。中身のキーでタスクを判別）:
+  generation: metadata["ground_truth"] = '{"chunk_labels": ["sample.jsonl#0", ...]}' (JSON文字列)
+  analysis:   metadata["ground_truth"] = '{"label": {...ゴールドラベルJSON...}}' (JSON文字列)
 
-報酬 = 0.5*source_exists + 0.2*citation_format + penalty（common/reward.py と同一関数）。
+報酬（common/reward.py と同一関数）:
+  generation = 0.5*source_exists + 0.2*citation_format + penalty
+  analysis   = 0.2*schema + 0.15*sectors + 0.15*query_type + 0.5*date_range + penalty（ループ8）
 Nemotron系のreasoningトレース(<think>...</think>)は採点前に除去する（docs/06の作法）。
 """
 from __future__ import annotations
@@ -20,7 +23,7 @@ from typing import Any, TypedDict
 
 _PIPELINE_DIR = os.environ.get("PIPELINE_DIR", "/pipeline")
 sys.path.insert(0, os.path.join(_PIPELINE_DIR, "common"))
-from reward import reward_generation  # noqa: E402  (common/reward.py)
+from reward import reward_analysis, reward_generation  # noqa: E402  (common/reward.py)
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
@@ -34,14 +37,18 @@ def strip_reasoning(text: str) -> str:
 
 
 def score_batch(responses: list[str], ground_truths: list[str]) -> list[float]:
-    """純関数部分（ray/nemo_rl 無しで単体テスト可能）。"""
+    """純関数部分（ray/nemo_rl 無しで単体テスト可能）。gtのキーでタスクを判別する。"""
     scores = []
     for ans, gt in zip(responses, ground_truths):
         try:
-            labels = json.loads(gt).get("chunk_labels", [])
+            obj = json.loads(gt)
         except Exception:
-            labels = []
-        scores.append(float(reward_generation(strip_reasoning(ans), labels)))
+            obj = {}
+        ans = strip_reasoning(ans)
+        if "label" in obj:
+            scores.append(float(reward_analysis(ans, obj["label"])))
+        else:
+            scores.append(float(reward_generation(ans, obj.get("chunk_labels", []))))
     return scores
 
 
@@ -60,7 +67,7 @@ try:
 
     @ray.remote(max_restarts=-1, max_task_retries=-1)
     class FinanceGroundingEnvironment(EnvironmentInterface[FinanceEnvMetadata]):
-        """出典グラウンディング報酬環境（単一報酬・1ターン）。"""
+        """検証可能報酬環境（1ターン）。generation=出典グラウンディング / analysis=ラベル一致。"""
 
         def __init__(self, cfg: FinanceEnvConfig):
             self.cfg = cfg  # 報酬は正規表現のみで軽量のためワーカー分散は不要
@@ -82,7 +89,7 @@ try:
             scores = score_batch(responses, gts)
             observations = [
                 {"role": "environment",
-                 "content": f"reward={s:.2f} (grounding)"} for s in scores
+                 "content": f"reward={s:.2f} (verifiable)"} for s in scores
             ]
             answers = ([strip_reasoning(r) for r in responses]
                        if return_extracted_answer else None)
