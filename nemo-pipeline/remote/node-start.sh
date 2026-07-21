@@ -24,8 +24,12 @@ fi
 swapon --show
 
 # 2系統同期。--delete は使わない(S3に無い checkpoints/ 等をローカル削除してしまう)
-aws s3 sync "s3://$CKPT_BUCKET/repo/" "$REPO_DIR/"
-aws s3 sync "s3://$CKPT_BUCKET/data/distilled/" "$PIPE_DIR/data/distilled/"
+# aws s3 syncはスキップ警告(vendor/内の壊れたsymlink等)だけでもrc=2を返し、
+# set -e下では後続(data同期・mlflow再起動)ごと静かに中断してしまう(ループ7実機で発現)。
+# rc=2(スキップのみ)は許容し、実エラー(rc=1等)のみ中断する
+s3sync() { aws s3 sync "$@" || [ $? -eq 2 ]; }
+s3sync "s3://$CKPT_BUCKET/repo/" "$REPO_DIR/"
+s3sync "s3://$CKPT_BUCKET/data/distilled/" "$PIPE_DIR/data/distilled/"
 
 # stop/startで--rmコンテナ(mlflow)が名前を掴んだまま残ることがある
 docker rm -f mlflow 2>/dev/null || true
