@@ -48,6 +48,23 @@ AUGMENT_PATTERNS = {
                         # 商品名ペア比較でsectors=["overall"]逃げが再発した
                         "hint": "セクター名ではなく具体的な商品名2つの比較。"
                                 "例:「金と原油はどちらが上がった？」「銅と天然ガスの値動きを比べて」"},
+    # --- ループ8: GRPO向け増強。狙いは2つ:
+    # (1) dr困難パターンの信号密度 — GRPOは8サンプル中に正解が出たときだけ強化できるが、
+    #     曜日を含む質問は訓練2件・「N日前/過去N日」は1件で、対象プロンプトがほぼ引かれない
+    # (2) プロンプト多様性の底上げ(general_*) — 266プロンプトの反復による暗記傾向を薄める。
+    #     既存カテゴリ分布(CATEGORIES)と同比率・hint=None(CAT_HINTを使用)
+    "weekday_range": {"category": "single_sector_single_day", "n": 15,
+                      "hint": "「今週火曜日」「先週の金曜日」など曜日で日付を指定する質問。"
+                              "例:「今週火曜日の原油はどうでしたか？」「先週金曜の金の値動きは？」"},
+    "relative_days": {"category": "trend", "n": 10,
+                      "hint": "「過去N日」「N日前から」など日数で期間を指定するトレンド質問。"
+                              "例:「過去3日の銅の動きは？」「5日前から今日までの原油を教えて」"},
+    "general_single": {"category": "single_sector_single_day", "n": 12, "hint": None},
+    "general_trend": {"category": "trend", "n": 6, "hint": None},
+    "general_comparison": {"category": "comparison", "n": 4, "hint": None},
+    "general_summary": {"category": "summary", "n": 4, "hint": None},
+    "general_ambiguous": {"category": "ambiguous", "n": 8, "hint": None},
+    "general_edge": {"category": "edge", "n": 6, "hint": None},
 }
 
 
@@ -118,8 +135,10 @@ def lint_splits(out_p: pathlib.Path, today: str) -> dict:
     lint_report.json へ書く。API不要。基準日は各itemのmeta.label_todayを優先
     (相対日付ゴールドはラベル付け日基準のため)。"""
     report: dict = {"violations": {}, "counts": Counter()}
-    for name in ["train", "valid", "heldout"]:
+    for name in ["train", "valid", "heldout", "heldout_ext"]:
         p = out_p / f"{name}.jsonl"
+        if not p.exists():      # heldout_ext は eval-augment 実行後にのみ存在
+            continue
         items = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
         vs = []
         for i, it in enumerate(items):
@@ -180,7 +199,7 @@ def relabel_splits(client, out_p: pathlib.Path, today: str, dry: bool,
     return stats
 
 def augment_splits(client, out_p: pathlib.Path, today: str, dry: bool,
-                   rng: random.Random) -> dict:
+                   rng: random.Random, patterns: set[str] | None = None) -> dict:
     """的絞りデータ増強(ループ7): AUGMENT_PATTERNSの質問を教師生成→現行規約でラベル→
     リント合格分のみを train/valid に90/10で追記する。heldoutは重複排除の参照のみで
     一切書き換えない(評価専用・不可侵)。基準日は既存itemのlabel_todayに揃えること
@@ -188,21 +207,26 @@ def augment_splits(client, out_p: pathlib.Path, today: str, dry: bool,
     backup = out_p / "pre-augment-backup"
     backup.mkdir(exist_ok=True)
     splits: dict[str, list[dict]] = {}
-    seen: set[str] = set()   # 全split(heldout含む)との重複を排除 — heldout類似問の混入防止
-    for name in ["train", "valid", "heldout"]:
+    seen: set[str] = set()   # 全split(heldout/heldout_ext含む)との重複を排除 — 評価類似問の混入防止
+    for name in ["train", "valid", "heldout", "heldout_ext"]:
         p = out_p / f"{name}.jsonl"
+        if not p.exists():   # heldout_ext は eval-augment 実行後にのみ存在
+            continue
         items = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
         splits[name] = items
         seen |= {dedup_key(it["input"]) for it in items}
-        if name != "heldout":
+        if name in ("train", "valid"):
             (backup / f"{name}.jsonl").write_text(
                 "".join(json.dumps(it, ensure_ascii=False) + "\n" for it in items), encoding="utf-8")
 
     stats: dict = {"today": today, "added": {}, "rejects": {}}
     for pat, spec in AUGMENT_PATTERNS.items():
+        if patterns and pat not in patterns:
+            continue
         added: list[dict] = []
         rejects: Counter = Counter()
-        for q in gen_queries(client, pat, spec["n"], dry, hint=spec["hint"]):
+        for q in gen_queries(client, pat, spec["n"], dry,
+                             hint=spec["hint"] or CAT_HINT[spec["category"]]):
             k = dedup_key(q)
             if k in seen:
                 rejects["dup"] += 1; continue
@@ -237,6 +261,57 @@ def augment_splits(client, out_p: pathlib.Path, today: str, dry: bool,
     return stats
 
 
+def eval_augment_split(client, out_p: pathlib.Path, today: str, dry: bool,
+                       rng: random.Random, n_total: int) -> dict:
+    """物差し増強(ループ8): 評価専用の heldout_ext.jsonl を生成・追記する。
+    heldout の analysis は n=28 で1件=3.6pt、実測0.821の95%CIは[0.64,0.92]に及び、
+    絶対閾値0.85との差が測定ノイズに埋もれる(閾値未達を課金学習で追う無駄の原因)。
+    既存 heldout と同じ CATEGORIES 分布・同じリントゲートで評価母数を増やし判別力を上げる。
+    heldout.jsonl 本体には触れない(過去evalとの比較可能性を保つ)。学習には一切使わない
+    (prep_rl / augment の読み取り対象外。dedupは全split+本ファイルを参照)。"""
+    path = out_p / "heldout_ext.jsonl"
+    seen: set[str] = set()
+    for name in ["train", "valid", "heldout"]:
+        for l in (out_p / f"{name}.jsonl").read_text(encoding="utf-8").splitlines():
+            if l.strip():
+                seen.add(dedup_key(json.loads(l)["input"]))
+    n_existing = 0
+    if path.exists():
+        existing = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        n_existing = len(existing)
+        seen |= {dedup_key(it["input"]) for it in existing}
+    added: list[dict] = []
+    rejects: Counter = Counter()
+    for cat, ratio in CATEGORIES.items():
+        for q in gen_queries(client, cat, max(1, round(n_total * ratio)), dry):
+            k = dedup_key(q)
+            if k in seen:
+                rejects["dup"] += 1; continue
+            try:
+                label = label_query(client, q, today, dry)
+            except (ValueError, json.JSONDecodeError) as e:
+                rejects[f"label:{type(e).__name__}"] += 1; continue
+            codes = lint_label(q, label, today)
+            if codes and not dry:      # 評価ゴールドこそ規約違反を持ち込まない(loop4の教訓)
+                rejects["lint:" + ",".join(codes)] += 1; continue
+            seen.add(k)
+            added.append({"input": q, "label": label,
+                          "meta": {"task": "analysis", "category": cat, "difficulty": "normal",
+                                   "teacher": TEACHER, "label_today": today, "eval_ext": True}})
+    rng.shuffle(added)
+    with path.open("a", encoding="utf-8") as w:
+        for it in added:
+            w.write(json.dumps(it, ensure_ascii=False) + "\n")
+    stats = {"today": today, "added": len(added), "total": n_existing + len(added),
+             "rejects": dict(rejects),
+             "by_category": dict(Counter(it["meta"]["category"] for it in added))}
+    (out_p / "eval_ext_stats.json").write_text(
+        json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
+    log.info("eval-augment: 追加%d件 (heldout_ext累計%d) 棄却%s", len(added), stats["total"], dict(rejects))
+    log.info("★ 評価母数が変わったため base から再測定が必要(相対合否のbaselineも同一セットで取り直す)")
+    return stats
+
+
 # ---- 分割・出力 ---------------------------------------------------------------
 def stratified_split(items: list[dict], heldout: float, rng: random.Random):
     by_key: dict[tuple, list[dict]] = {}
@@ -264,14 +339,14 @@ def dedup(items: list[dict]) -> list[dict]:
 def main(inp: str, out: str, heldout_ratio: float, n_analysis: int, n_generation: int,
          gen_chunks: int, chunk_chars: int, dry: bool, relabel: bool = False,
          lint: bool = False, only_lint: bool = False, today_arg: str | None = None,
-         augment: bool = False):
+         augment: bool = False, eval_augment_n: int = 0, patterns_csv: str | None = None):
     rng = random.Random(42)
     out_p = pathlib.Path(out); out_p.mkdir(parents=True, exist_ok=True)
     today = today_arg or time.strftime("%Y-%m-%d")
 
     # リント・部分再ラベル・増強の基準日は既存データの label_today に揃える。
     # 基準日が混在すると s6_eval が実行日フォールバックし相対日付ゴールドが崩れる
-    if lint or augment or (relabel and only_lint):
+    if lint or augment or eval_augment_n or (relabel and only_lint):
         lts: set = set()
         for name in ["train", "valid", "heldout"]:
             p = out_p / f"{name}.jsonl"
@@ -294,9 +369,15 @@ def main(inp: str, out: str, heldout_ratio: float, n_analysis: int, n_generation
         return
 
     only = None
+    patterns = set(patterns_csv.split(",")) if patterns_csv else None
+    if patterns and (bad := patterns - set(AUGMENT_PATTERNS)):
+        log.error("未定義のパターン: %s (定義済み: %s)", sorted(bad), list(AUGMENT_PATTERNS)); sys.exit(1)
     n_teacher = n_analysis
     if augment:
-        n_teacher = sum(spec["n"] for spec in AUGMENT_PATTERNS.values())
+        n_teacher = sum(spec["n"] for pat, spec in AUGMENT_PATTERNS.items()
+                        if not patterns or pat in patterns)
+    if eval_augment_n:
+        n_teacher = eval_augment_n
     if relabel and only_lint:
         rp = out_p / "lint_report.json"
         if not rp.exists():
@@ -313,11 +394,15 @@ def main(inp: str, out: str, heldout_ratio: float, n_analysis: int, n_generation
             log.error("ANTHROPIC_API_KEY 未設定。配管確認だけなら --dry-run"); sys.exit(1)
         import anthropic
         client = anthropic.Anthropic()
-        est = (n_teacher * 0.6) if (relabel or augment) else (n_teacher * 0.6 + n_generation * 2.2)  # kトークン概算/件
+        est = (n_teacher * 0.6) if (relabel or augment or eval_augment_n) else (n_teacher * 0.6 + n_generation * 2.2)  # kトークン概算/件
         log.info("概算教師コスト: ~$%.1f (入出力%.0fKtok想定・実測で要確認)", est * 0.015, est)
 
+    if eval_augment_n:
+        eval_augment_split(client, out_p, today, dry, rng, eval_augment_n)
+        return
+
     if augment:
-        augment_splits(client, out_p, today, dry, rng)
+        augment_splits(client, out_p, today, dry, rng, patterns)
         log.info("★ train/valid が変わったため prep-rl の再実行が必要(heldoutは不変・再評価はbaseから)")
         return
 
@@ -402,6 +487,10 @@ if __name__ == "__main__":
                    help="基準日の上書き(YYYY-MM-DD)。既定: 既存label_today→実行日")
     p.add_argument("--augment", action="store_true",
                    help="的絞りデータ増強: AUGMENT_PATTERNSの新規analysis例をtrain/validにのみ追記(heldout不可侵)")
+    p.add_argument("--patterns", default=None,
+                   help="--augment の対象パターンをCSVで限定(既定: 全パターン)")
+    p.add_argument("--eval-augment", type=int, default=0, dest="eval_augment",
+                   help="評価専用セット増強: N件を heldout_ext.jsonl へ追記(学習不使用・物差しの判別力向上)")
     a = p.parse_args()
     main(a.inp, a.out, a.heldout_ratio, a.n_analysis, a.n_generation, a.gen_chunks, a.chunk_chars,
-         a.dry_run, a.relabel, a.lint, a.only_lint, a.today, a.augment)
+         a.dry_run, a.relabel, a.lint, a.only_lint, a.today, a.augment, a.eval_augment, a.patterns)

@@ -2,8 +2,11 @@
 - analysis: schema_valid / sectors・query_type・date_range 一致 / 全一致(analysis_match)
 - generation: source_exists / citation_format
 - --mode dry : エンドポイント無しで教師ラベルを正answerとみなし配管検証（全指標=満点になるはず）
-- 合否: eval.yaml の thresholds と比較し、exit 0(合格)/2(不合格)
+- 合否(exit 0/2): thresholds(絶対値) + baseline_thresholds(ベースライン実測比。設計原典
+  docs/01-plan.md の「analysis_match ≥ base」。--baseline <tag|path> で基準レポートを指定。
+  未指定時は相対指標を合否から除外=そのrun自体がベースラインの場合)
 使い方(base測定の例): OPENAI_BASE_URL=http://llm-gen:8000/v1 python s6_eval.py --config eval.yaml --tag base
+     (SFT/GRPO測定): ... python s6_eval.py --config eval.yaml --tag grpo8 --baseline base8
 """
 from __future__ import annotations
 import argparse, json, logging, os, pathlib, sys, time, urllib.request
@@ -101,16 +104,39 @@ def main():
     ap.add_argument("--tag", default="model", help="レポート名(base/sft/grpo等)")
     ap.add_argument("--mode", choices=["live", "dry"], default="live")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--baseline", default=None,
+                    help="相対合否(baseline_thresholds)の基準。タグ名(--out/eval_<tag>.json)かパス")
     a = ap.parse_args()
 
     cfg = load_yaml(a.config)
-    heldout = a.heldout or cfg["suites"][0]["path"]
-    thresholds = cfg["suites"][0].get("thresholds", {})
+    suite = cfg["suites"][0]
+    heldout = a.heldout or suite["path"]
+    thresholds = suite.get("thresholds", {})
+    baseline_ths = suite.get("baseline_thresholds", {})
+    reference = suite.get("reference", {})
     base_url = os.getenv("OPENAI_BASE_URL", cfg.get("endpoint", {}).get("base_url", ""))
     model = cfg.get("endpoint", {}).get("model", "qwen3-gen")
 
-    items = [json.loads(l) for l in open(heldout, encoding="utf-8") if l.strip()]
+    # 評価セットは複数ファイル可(heldout.jsonl + heldout_ext.jsonl)。heldout本体は不可侵の
+    # まま評価母数だけを増やすため(n=28では1件=3.6ptで合否が測定ノイズに埋もれる)
+    items = []
+    for p in (heldout if isinstance(heldout, list) else [heldout]):
+        if not pathlib.Path(p).exists():
+            log.warning("評価ファイルなし(スキップ): %s", p); continue
+        items += [json.loads(l) for l in open(p, encoding="utf-8") if l.strip()]
+    if not items:
+        log.error("評価itemが0件"); sys.exit(1)
     if a.limit: items = items[: a.limit]
+
+    base_rep = None
+    if a.baseline:
+        bp = pathlib.Path(a.baseline) if "/" in a.baseline else pathlib.Path(a.out) / f"eval_{a.baseline}.json"
+        if not bp.exists():
+            log.error("baselineレポートが見つからない: %s", bp); sys.exit(1)
+        base_rep = json.loads(bp.read_text(encoding="utf-8"))
+        if base_rep.get("n") != len(items):
+            log.error("baseline母数 n=%s ≠ 現在 n=%d — 相対比較は同一評価セットのbaselineで取り直すこと",
+                      base_rep.get("n"), len(items)); sys.exit(1)
 
     # 基準日: ラベル付け時のtoday(meta.label_today)があればそれを使う。
     # ゴールドの相対日付(先週=7日前〜等)はラベル付け日基準のため、評価実行日と
@@ -157,9 +183,21 @@ def main():
     by_category = {c: {k: (v if k == "n" else round(v / cs["n"], 4)) for k, v in cs.items()}
                    for c, cs in cat_sums.items()}
     verdict = {k: (means.get(k, 0.0) >= th) for k, th in thresholds.items()}
+    baseline_used = None
+    if baseline_ths and base_rep is not None:
+        # 設計原典(docs/01-plan.md)の相対基準: 同一評価セットのベースライン実測+マージン以上で合格
+        for k, margin in baseline_ths.items():
+            bv = base_rep["metrics"].get(k, 0.0)
+            verdict[k] = means.get(k, 0.0) >= bv + margin
+        baseline_used = {"tag": base_rep.get("tag"),
+                         "metrics": {k: base_rep["metrics"].get(k) for k in baseline_ths}}
+    elif baseline_ths:
+        log.warning("baseline未指定 — 相対基準%sは合否から除外(このrunがベースラインなら想定どおり。"
+                    "比較時は --baseline <tag> か make eval BASELINE=<tag>)", list(baseline_ths))
     report = {"tag": a.tag, "mode": a.mode, "n": len(items), "metrics": means,
               "by_category": by_category,
-              "thresholds": thresholds, "pass": all(verdict.values()) if verdict else None,
+              "thresholds": thresholds, "baseline": baseline_used, "reference": reference,
+              "pass": all(verdict.values()) if verdict else None,
               "verdict": verdict}
     out_p = pathlib.Path(a.out); out_p.mkdir(parents=True, exist_ok=True)
     (out_p / f"eval_{a.tag}.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

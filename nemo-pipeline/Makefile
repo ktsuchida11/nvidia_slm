@@ -32,7 +32,7 @@ MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 # データビューア用ポート（衝突時は hostpath.mk で上書き）
 VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch curate distill relabel lint-labels relabel-lint distill-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry guardrails guardrails-test tracking tensorboard viewer clean
+.PHONY: setup extract caption fetch curate distill relabel lint-labels relabel-lint augment eval-augment distill-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry guardrails guardrails-test tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -90,9 +90,12 @@ lint-labels:         ## S2 ゴールド規約リント（API不要。違反一�
 relabel-lint:        ## S2 リント違反ゴールドのみ教師で再ラベル（要ANTHROPIC_API_KEY。先に make lint-labels）
 	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
 	  python /pipeline/s2_distillation/s2_distill.py --in /data/curated --out /data/distilled --relabel --only-lint"
-augment:             ## S2 的絞りデータ増強（不足パターンをtrain/validへ追記。heldout不可侵。要ANTHROPIC_API_KEY）
+augment:             ## S2 的絞りデータ増強（不足パターンをtrain/validへ追記。heldout不可侵。PATTERNS=CSVで限定。要ANTHROPIC_API_KEY）
 	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
-	  python /pipeline/s2_distillation/s2_distill.py --in /data/curated --out /data/distilled --augment"
+	  python /pipeline/s2_distillation/s2_distill.py --in /data/curated --out /data/distilled --augment $(if $(PATTERNS),--patterns $(PATTERNS))"
+eval-augment:        ## S2 評価専用セット増強（heldout_ext.jsonlへ追記・学習不使用。N_EVAL=40。要ANTHROPIC_API_KEY）
+	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
+	  python /pipeline/s2_distillation/s2_distill.py --in /data/curated --out /data/distilled --eval-augment $(or $(N_EVAL),40)"
 distill-dry:         ## S2 配管検証（API不要・数秒）
 	$(RUN) $(PY_IMG) python /pipeline/s2_distillation/s2_distill.py \
 	  --in /data/curated --out /data/distilled --dry-run \
@@ -186,9 +189,9 @@ vendor-rl:           ## 閉域準備: NeMo-RLをリポ内に取り込み（--rec
 	git clone --depth 1 --recursive https://github.com/NVIDIA-NeMo/RL vendor/RL
 
 # --- 評価（OPENAI_BASE_URL=推論エンドポイント。TAG=base|sft|grpo） ------------
-eval:                ## S6 本評価（exit 0=合格 / 2=閾値未達）。Nemotronは EVAL_CHAT_KWARGS='{"enable_thinking": false}' で思考抑止
+eval:                ## S6 本評価（exit 0=合格 / 2=閾値未達）。相対合否は BASELINE=<tag> を指定（例: TAG=grpo8 BASELINE=base8）。Nemotronは EVAL_CHAT_KWARGS='{"enable_thinking": false}' で思考抑止
 	$(RUN) -e OPENAI_BASE_URL -e OPENAI_API_KEY -e EVAL_SYS_PREFIX -e EVAL_CHAT_KWARGS $(PY_IMG) bash -lc "(pip -q install pyyaml 2>/dev/null || true) && \
-	  python /pipeline/s6_evaluation/s6_eval.py --config /pipeline/s6_evaluation/eval.yaml --tag $(TAG)"
+	  python /pipeline/s6_evaluation/s6_eval.py --config /pipeline/s6_evaluation/eval.yaml --tag $(TAG) $(if $(BASELINE),--baseline $(BASELINE))"
 eval-dry:            ## S6 配管検証（エンドポイント不要・全指標満点になるはず）
 	$(RUN) $(PY_IMG) bash -lc "(pip -q install pyyaml 2>/dev/null || true) && \
 	  python /pipeline/s6_evaluation/s6_eval.py --config /pipeline/s6_evaluation/eval.yaml --mode dry --tag dry"
