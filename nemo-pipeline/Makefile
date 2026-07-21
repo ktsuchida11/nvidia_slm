@@ -179,7 +179,9 @@ sft:                 ## S4 SFT/LoRA（NeMo-RL: examples/run_sft.py + s4_sft/sft_
 	  $(RL_IMG) bash /pipeline/s4_sft/run_sft.sh
 GRPO_CFG ?= grpo_qwen.yaml
 grpo:                ## S5 GRPO（NeMo-RL + カスタム報酬環境。analysis用は GRPO_CFG=grpo_analysis.yaml。OOM時 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64）
-	$(RUN) $(GPU) $(TRACK) --shm-size=32g -e PIPELINE_DIR=/pipeline $(RL_IMG) bash -lc \
+	$(RUN) $(GPU) $(TRACK) --shm-size=32g -e PIPELINE_DIR=/pipeline \
+	  -e RAY_memory_monitor_refresh_ms=0 \
+	  $(RL_IMG) bash -lc \
 	  "if [ -d /opt/nemo-rl/examples ]; then cd /opt/nemo-rl; \
 	   elif [ -d /pipeline/vendor/RL ]; then cd /pipeline/vendor/RL; \
 	   else git clone --depth 1 --recursive --branch $(RL_REF) https://github.com/NVIDIA-NeMo/RL /rl && cd /rl; fi && \
