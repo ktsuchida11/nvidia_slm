@@ -83,6 +83,19 @@ def main() -> None:
             shutil.copy2(f, out / f.name)
     for f in pathlib.Path(a.tokenizer).iterdir():
         shutil.copy2(f, out / f.name)
+
+    # config.json に torch_dtype を必ず書く。base(Nemotron)のconfigにはこのキーが無く、
+    # transformers/automodelはfp32デフォルトで実体化する → 9BがGPUで33GB(bf16の倍)になり
+    # GRPO refitのGPU OOMとserve-sftの無駄なfp32配信を招いた(ループ8実機で特定)。
+    # 実テンソルのdtypeはシャード先頭から検出する(常にbaseと同一 = 通常bf16)
+    cfg_path = out / "config.json"
+    cfg_json = json.loads(cfg_path.read_text())
+    if not cfg_json.get("torch_dtype"):
+        first_shard = sorted(out.glob("*.safetensors"))[0]
+        dtype = str(next(iter(load_file(str(first_shard)).values())).dtype).removeprefix("torch.")
+        cfg_json["torch_dtype"] = dtype
+        cfg_path.write_text(json.dumps(cfg_json, indent=2))
+        print(f"[merge] config.json に torch_dtype={dtype} を補完")
     print(f"[merge] {len(merged)} modules merged / saved -> {out}")
 
 
