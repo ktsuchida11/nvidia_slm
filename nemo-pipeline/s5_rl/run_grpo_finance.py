@@ -34,6 +34,43 @@ if "finance_grounding" not in ENV_REGISTRY:
 ACTOR_ENVIRONMENT_REGISTRY.setdefault(
     "finance_env.FinanceGroundingEnvironment", PY_EXECUTABLES.SYSTEM)
 
+# --- 参照ポリシー省略の注入（ループ8実機: RAM対策） -----------------------------
+# v0.6.0 の examples/run_grpo.py は Policy() に init_reference_model を渡さず常に
+# 参照ポリシー（モデル全重みの pinned CPUコピー ≈18GB・スワップ不能）を作る。
+# vLLM colocated の sleep(level=1) も pinned ≈18GB を掴むため、単一GPU・64GBホスト
+# でも RAM が枯渇してスラッシングで死ぬ（g6e.2xlarge 実機で再現）。
+# 設定が「KL罰=0 + 参照logprobスキップ」を明示している場合に限り、
+# Policy.__init__ へ init_reference_model=False を注入して 18GB を節約する
+# （この構成では reference_model_state_dict は一切アクセスされない — grpo.py確認済み）。
+def _maybe_disable_reference_model() -> None:
+    cfg_path = None
+    for i, a in enumerate(sys.argv):
+        if a == "--config" and i + 1 < len(sys.argv):
+            cfg_path = sys.argv[i + 1]
+        elif a.startswith("--config="):
+            cfg_path = a.split("=", 1)[1]
+    if not cfg_path:
+        return
+    import yaml
+    cfg = yaml.safe_load(open(cfg_path, encoding="utf-8"))
+    skip = (cfg.get("grpo", {}) or {}).get("skip_reference_policy_logprobs_calculation")
+    kl = (cfg.get("loss_fn", {}) or {}).get("reference_policy_kl_penalty")
+    if not (skip and kl == 0):
+        return
+    from nemo_rl.models.policy.lm_policy import Policy
+    orig_init = Policy.__init__
+
+    def init_without_reference(self, *args, **kwargs):
+        kwargs["init_reference_model"] = False
+        orig_init(self, *args, **kwargs)
+
+    Policy.__init__ = init_without_reference
+    print("[run_grpo_finance] init_reference_model=False を注入"
+          "（KL罰=0 + skip_reference_policy_logprobs_calculation のため参照ポリシー非保持）")
+
+
+_maybe_disable_reference_model()
+
 # NeMo-RLリポのルート（examples/ がある場所）から実行される前提
 run_grpo = pathlib.Path("examples/run_grpo.py")
 assert run_grpo.exists(), (

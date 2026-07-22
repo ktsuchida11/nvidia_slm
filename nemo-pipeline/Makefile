@@ -178,9 +178,15 @@ sft:                 ## S4 SFT/LoRA（NeMo-RL: examples/run_sft.py + s4_sft/sft_
 	  -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 	  $(RL_IMG) bash /pipeline/s4_sft/run_sft.sh
 GRPO_CFG ?= grpo_qwen.yaml
+# GRPO_DOCKER_FLAGS: ホストRAM保護用の追加dockerフラグ（例: 64GBホストで
+#   GRPO_DOCKER_FLAGS='--memory=56g --memory-swap=88g' — コンテナ内OOMに閉じ込め
+#   SSM/ホストの窒息を防ぐ。ループ8実機の教訓）
+# shm 16g: Rayオブジェクトストアは/dev/shm内に確保される。32gだと空きRAMの3割(~27GB)
+#   まで膨らみホストを圧迫。本ワークロードのrolloutは数MB程度で16gでも過剰余裕
 grpo:                ## S5 GRPO（NeMo-RL + カスタム報酬環境。analysis用は GRPO_CFG=grpo_analysis.yaml。OOM時 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64）
-	$(RUN) $(GPU) $(TRACK) --shm-size=32g -e PIPELINE_DIR=/pipeline \
+	$(RUN) $(GPU) $(TRACK) --shm-size=16g $(GRPO_DOCKER_FLAGS) -e PIPELINE_DIR=/pipeline \
 	  -e RAY_memory_monitor_refresh_ms=0 \
+	  -e RAY_DEFAULT_OBJECT_STORE_MEMORY_PROPORTION=0.15 \
 	  $(RL_IMG) bash -lc \
 	  "if [ -d /opt/nemo-rl/examples ]; then cd /opt/nemo-rl; \
 	   elif [ -d /pipeline/vendor/RL ]; then cd /pipeline/vendor/RL; \

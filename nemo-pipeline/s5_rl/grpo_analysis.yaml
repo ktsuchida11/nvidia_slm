@@ -41,13 +41,18 @@ grpo:
     target_min: 0.0
     target_max: 1.0
   seq_logprob_error_threshold: null
+  # ループ8実機: 参照ポリシー(全重みのpinned CPUコピー≈18GB)とvLLM sleepのpinned≈18GBで
+  # 64GBホストでもRAM枯渇→スラッシング死。KL罰0と併せて参照logprobを省略し、
+  # run_grpo_finance.py が init_reference_model=False を注入して18GBを節約する。
+  # KL無しの逸脱リスクはLoRA(dim16)+lr 3e-7+40stepの小規模プローブでは許容範囲
+  skip_reference_policy_logprobs_calculation: true
   async_grpo:
     enabled: false
     max_trajectory_age_steps: 1
     in_flight_weight_updates: false
     recompute_kv_cache_after_weight_updates: false
 loss_fn:
-  reference_policy_kl_penalty: 0.01
+  reference_policy_kl_penalty: 0.0   # skip_reference_policy_logprobs_calculation の必須条件
   reference_policy_kl_type: k3
   kl_input_clamp_value: 20.0
   kl_output_clamp_value: 10.0
