@@ -181,10 +181,11 @@ GRPO_CFG ?= grpo_qwen.yaml
 # GRPO_DOCKER_FLAGS: ホストRAM保護用の追加dockerフラグ（例: 64GBホストで
 #   GRPO_DOCKER_FLAGS='--memory=56g --memory-swap=88g' — コンテナ内OOMに閉じ込め
 #   SSM/ホストの窒息を防ぐ。ループ8実機の教訓）
-# shm 16g: Rayオブジェクトストアは/dev/shm内に確保される。32gだと空きRAMの3割(~27GB)
-#   まで膨らみホストを圧迫。本ワークロードのrolloutは数MB程度で16gでも過剰余裕
+# shm: Rayオブジェクトストアは/dev/shm内に確保され proportion(0.15)×空きRAM まで要求する。
+#   shm不足だとRayが/tmpへフォールバックし劣化するため、shmは 0.15×ホストRAM を収める値にする
+#   (g6e.12xlarge 384GB → 0.15×~370GB≈55GB < 64g)。tmpfsは遅延割当のため未使用分はRAMを食わない
 grpo:                ## S5 GRPO（NeMo-RL + カスタム報酬環境。analysis用は GRPO_CFG=grpo_analysis.yaml。OOM時 PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64）
-	$(RUN) $(GPU) $(TRACK) --shm-size=16g $(GRPO_DOCKER_FLAGS) -e PIPELINE_DIR=/pipeline \
+	$(RUN) $(GPU) $(TRACK) --shm-size=64g $(GRPO_DOCKER_FLAGS) -e PIPELINE_DIR=/pipeline \
 	  -e RAY_memory_monitor_refresh_ms=0 \
 	  -e RAY_DEFAULT_OBJECT_STORE_MEMORY_PROPORTION=0.15 \
 	  $(RL_IMG) bash -lc \

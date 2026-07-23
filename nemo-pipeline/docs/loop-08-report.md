@@ -61,9 +61,12 @@ true ②vLLM sleep level=1→2 の1行パッチ（bind-mountで注入可） ③�
 
 1. **g6e.12xlarge（L40S×4）で非colocated GRPO** — 分離すればfp32マスター問題ごと消える。
    スポットクォータ「All G and VT Spot Instance Requests」8→48 vCPU の引き上げ申請が必要（数日）
-2. クォータ承認後: tfvars変更→ノード構築→base8はresults/eval_base8.json（復元済み）を
-   S3経由でノードresults/へ配置→`make grpo GRPO_CFG=grpo_analysis.yaml`（cluster.gpus_per_node要調整）→
-   `make eval TAG=grpo8 BASELINE=base8`
+2. クォータ承認後（2026-07-23確認・適用値48）: tfvars変更→ノード構築→base8は
+   results/eval_base8.json（復元済み）をS3経由でノードresults/へ配置→
+   `make grpo GRPO_CFG=grpo_analysis.yaml`→`make eval TAG=grpo8 BASELINE=base8`。
+   4GPU設定は調整済み: vLLM専用2GPU(TP=2)+学習2GPU(DP=2)の非colocated
+   （DP=3は128バッチが割り切れないため2/2対称分割。grpo_analysis.yaml★コメント参照）。
+   shmは64gへ拡大（Rayストア0.15×384GB≈55GBを/dev/shm内に収める）
 3. 合否 = analysis_match ≥ 0.8361（非退行）+ schema/source 1.0・citation ≥0.95
 
 ## コスト

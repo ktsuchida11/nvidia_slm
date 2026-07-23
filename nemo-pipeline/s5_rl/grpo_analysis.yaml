@@ -5,6 +5,11 @@
 #   assistantメッセージに入れ、processor=math_hf_data_processor がそれを metadata['ground_truth'] として
 #   環境(finance_env)へ渡す。→ data.train.output_key: ground_truth が必須（無いと KeyError 'output'）
 # 報酬・独自設定（40step小規模プローブ・LoRA・絞りノブ・MLflow等）の設計意図は s5_rl/README.md 参照
+# ★4GPU非colocated構成（g6e.12xlarge L40S×4、ループ8で単一GPU colocatedがv0.6.0仕様外と実証→移行）:
+#   vLLM専用2GPU(TP=2) + 学習2GPU(DP=2)。分割は grpo.py の cluster 構築が
+#   colocated.resources.gpus_per_node を vLLM に確保し残りを学習に割り当てる。
+#   制約: num_prompts_per_step×num_generations_per_prompt(=128) が学習DPサイズで可除であること
+#   (grpo.py L2716)。DP=3(学習3GPU)は128が割り切れないため2/2対称分割を採用
 grpo:
   num_prompts_per_step: 16
   num_generations_per_prompt: 8
@@ -253,10 +258,10 @@ policy:
       async_engine: false
       precision: ${policy.precision}
       kv_cache_dtype: auto
-      tensor_parallel_size: 1
+      tensor_parallel_size: 2  # vLLM専用2GPUをTPで束ねる(9B重みが9GB/GPUに割れKV余裕も倍増)
       pipeline_parallel_size: 1
       expert_parallel_size: 1
-      gpu_memory_utilization: 0.6  # 0.4は9B重み(~18GB)でKVブロック確保不能(実機エラー)。v0.6.0 colocatedはsleep modeで学習中vLLMが退避するため生成フェーズ基準でよい(公式8B参照configと同値)
+      gpu_memory_utilization: 0.6  # 0.4は9B重み展開でKVブロック確保不能(単一GPU実機エラー)。非colocatedの専用GPUなら上げる余地はあるがTP=2では0.6で十分なため既知の安全値を維持
       max_model_len: ${policy.max_total_sequence_length}
       enforce_eager: false
       use_deep_gemm: false
@@ -266,10 +271,10 @@ policy:
       vllm_metrics_logger_interval: 0.5
     vllm_kwargs: {}
     colocated:
-      enabled: true
+      enabled: false  # 非colocated: vLLMを専用GPUへ分離。fp32マスター重み(33.3GB)とvLLMの同居問題が構造ごと消える
       resources:
-        gpus_per_node: null
-        num_nodes: null
+        gpus_per_node: 2  # vLLM専用GPU数。残り(4-2=2)が学習用DP=2になる
+        num_nodes: null   # 単一ノードではnull必須(grpo.py L470)
 data:
   max_input_seq_length: ${policy.max_total_sequence_length}
   shuffle: true
@@ -318,5 +323,5 @@ logger:
     collection_interval: 10
     flush_interval: 10
 cluster:
-  gpus_per_node: 1
+  gpus_per_node: 4  # g6e.12xlarge L40S×4（vLLM 2 + 学習 2 に分割。上部★コメント参照）
   num_nodes: 1

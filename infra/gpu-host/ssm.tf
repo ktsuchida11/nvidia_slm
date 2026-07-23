@@ -21,7 +21,7 @@ resource "aws_ssm_document" "session_manager_run_shell" {
       cloudWatchLogGroupName      = aws_cloudwatch_log_group.ssm_session.name
       cloudWatchEncryptionEnabled = false
       cloudWatchStreamingEnabled  = true
-      idleSessionTimeout          = "20"
+      idleSessionTimeout          = "60"   # 上限値。学習の待ち時間で切れないように(ループ8)。長時間ジョブ自体はtmux必須
       runAsEnabled                = false
     }
   })
