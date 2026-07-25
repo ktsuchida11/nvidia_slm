@@ -88,7 +88,12 @@ policy:
   model_name: /ckpt/sft/hf
   tokenizer:
     name: ${policy.model_name}
-    chat_template_kwargs: null
+    # 思考モード抑止(必須)。null(=テンプレート既定の思考ON)だと生成が<think>で始まり
+    # 400トークン上限を思考の途中で使い切ってJSONに到達せず、全報酬0で学習が空振りする
+    # (ループ8実機: 36step完走したがAvg Reward≈0・平均生成長=上限張り付きで発覚)。
+    # evalのEVAL_CHAT_KWARGS='{"enable_thinking": false}'と同じ配備時契約に揃える
+    chat_template_kwargs:
+      enable_thinking: false
   hf_config_overrides: {}
   train_global_batch_size: 128
   train_micro_batch_size: 1
