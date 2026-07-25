@@ -69,6 +69,36 @@ true ②vLLM sleep level=1→2 の1行パッチ（bind-mountで注入可） ③�
    shmは64gへ拡大（Rayストア0.15×384GB≈55GBを/dev/shm内に収める）
 3. 合否 = analysis_match ≥ 0.8361（非退行）+ schema/source 1.0・citation ≥0.95
 
+## 追記（2026-07-26・g6e.12xlarge実機第1ラウンド）
+
+### 解決した2問題（PR #40）
+
+1. **refit断片化OOM**: 4GPU非colocatedでも step 9-10 のrefit（packed torch.cat ~2GB連続確保）で
+   3回連続OOM。原因はtrain→refitサイクルが蓄積するアロケータ断片化(~15GB、実確保26GBに対し
+   予約42GB)。NeMo-RL上流も既知と明記。対策 = `dtensor_cfg.cpu_offload: true` +
+   `dtensor_cfg.env_vars: PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True`
+   （policyワーカー限定注入のためvLLMのCuMemAllocatorと衝突しない。公式automodelレシピと同一手法）。
+   max_split_size_mb:64 は効果なし（断片化量不変）を実測確認
+2. **思考モードによる学習空振り**: 36step完走したが Avg Reward≈0・平均生成長=400上限張り付き・
+   loss 0。`chat_template_kwargs: null` だとテンプレート既定の思考ONで生成が`<think>`から始まり、
+   思考文が400トークンを食い潰しJSON未到達→schema gate 0→全報酬同値でadvantage 0。
+   対策 = `chat_template_kwargs: {enable_thinking: false}`（evalのEVAL_CHAT_KWARGSと同じ配備時契約）
+
+### 教訓（次回must）
+
+- **step 1 の Avg Reward を健全性ゲートにする**（期待0.5〜0.9。0.0x台なら即中断）。
+  36step空振りは「開始直後の報酬値確認」で防げた
+- GRPOの学習信号はグループ内報酬差のみ: 暗記済み(8/8正解)も全滅(0/8)も advantage 0 で無学習。
+  finance_env の `frac_full_reward` / `frac_no_reward` で「時々正解できる帯域」にデータが
+  乗っているかを最初の2〜3stepで判定できる
+
+### 状態（ユーザー判断で再テスト前に見直しへ）
+
+再走はせず**データ・報酬設計の見直しを優先**（ユーザー指摘: 少データ暗記でグループ内差が
+出ない懸念。過去に類似タスクのGRPO不発経験あり）。ノード停止(i-0e2549759e6e56b5c)。
+検証用一次資料 = S3 results/loop8/logs/grpo/exp_005/train_data_step*.jsonl（全36stepの
+プロンプト・生成・報酬・logprob）。GRPO成果物チェックポイントは無価値（advantage 0）のため破棄
+
 ## コスト
 
-教師 ~$1（eval増強+訓練増強）/ GPU ~$10-12（2ノード・デバッグ含む2日）
+教師 ~$1（eval増強+訓練増強）/ GPU ~$15-20（3ノード・デバッグ含む3日）
