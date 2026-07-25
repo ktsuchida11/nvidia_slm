@@ -101,7 +101,15 @@ policy:
   dtensor_cfg:
     _v2: true
     enabled: true
-    cpu_offload: false
+    # ループ8実機(L40S 44.4GB×2で学習): cpu_offload+expandable_segmentsの2点セットで完走。
+    # 3回連続で同一地点(refitのpacked torch.cat ~2GB連続確保)がOOM。原因はtrain→refitサイクルが
+    # 蓄積させるアロケータ断片化(~15GB)で、NeMo-RL上流も既知と明記し公式レシピが同じ対策を同梱
+    # (grpo-qwen3.5-*-automodel-*.yaml)。max_split_size_mb:64は効果なし(断片化量が不変)だった。
+    # env_varsはpolicyワーカー限定注入(lm_policy.py L147)のためvLLMのCuMemAllocatorと衝突しない。
+    # 副作用: refitが最大~5倍遅くなる(上流注記)。80GB級GPUなら両方falseに戻してよい
+    cpu_offload: true
+    env_vars:
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
     sequence_parallel: false
     activation_checkpointing: true
     tensor_parallel_size: 1
