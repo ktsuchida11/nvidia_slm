@@ -14,7 +14,8 @@ import argparse, json, logging, os, pathlib, sys, time, urllib.request
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "common"))
 from reward import source_exists, citation_format, refusal_without_citation
 from schema import validate_analysis
-from prompts import LABEL_SYS, ANSWER_SYS, format_today
+from prompts import LABEL_SYS, ANSWER_SYS, FINQA_SYS, format_today
+from finqa import score_finqa, extract_final_answer, has_answer_marker
 
 logging.basicConfig(level=logging.INFO, format="[eval] %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -88,6 +89,16 @@ def eval_analysis(item: dict, pred_raw: str) -> dict:
     m["analysis_match"] = min(m["sectors_match"], m["query_type_match"], m["date_range_match"])
     return m
 
+def eval_finqa(item: dict, pred: str) -> dict:
+    """finqa(ループ9): 報酬(common/finqa.py)と同一スコアラで評価する(学習と評価の整合)。
+    finqa_score=連続スコア / finqa_exact=満点率 / number_found・format=部分指標(失敗内訳用)"""
+    v = item["meta"]["verify"]
+    s = score_finqa(pred, v)
+    return {"finqa_score": round(s, 4),
+            "finqa_exact": 1.0 if s >= 0.999 else 0.0,
+            "finqa_number_found": 1.0 if extract_final_answer(pred) else 0.0,
+            "finqa_format": 1.0 if has_answer_marker(pred) else 0.0}
+
 def eval_generation(item: dict, pred: str) -> dict:
     labels = [c["label"] for c in item["input"]["chunks"]]
     # unanswerableへの出典なし拒否は蒸留ゲートと同じく満点(reward.pyの述語を共有)。
@@ -158,6 +169,12 @@ def main():
             pred = json.dumps(it["label"], ensure_ascii=False) if a.mode == "dry" else \
                    chat(base_url, model, LABEL_SYS.replace("{today}", format_today(today)), it["input"], 400)
             m = eval_analysis(it, pred)
+        elif task == "finqa":
+            # dryはverifyから満点解答を合成(verify→スコアラの往復整合を配管検証)
+            v = it["meta"]["verify"]
+            pred = f"答え: {v['value']}{v.get('unit') or ''}" if a.mode == "dry" else \
+                   chat(base_url, model, FINQA_SYS, it["input"], 400)
+            m = eval_finqa(it, strip_reasoning(pred))
         else:
             if a.mode == "dry":
                 pred = it["label"]
@@ -175,8 +192,9 @@ def main():
         # 失敗内訳分析用のper-item記録(ループ2で集計値しか残らず内訳不明だった教訓)
         details.append({"i": idx, "task": task, "category": it["meta"].get("category"),
                         "metrics": m,
-                        "input": (it["input"] if task == "analysis" else it["input"]["question"]),
-                        "gold": it["label"] if task == "analysis" else None,
+                        "input": (it["input"]["question"] if task == "generation" else it["input"]),
+                        "gold": (it["label"] if task == "analysis" else
+                                 it["meta"].get("verify") if task == "finqa" else None),
                         "pred": pred if isinstance(pred, str) else None})
 
     means = {k: round(sums[k] / counts[k], 4) for k in sums}

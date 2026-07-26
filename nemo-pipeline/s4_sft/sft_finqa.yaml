@@ -1,0 +1,167 @@
+# S4 SFT/LoRA — ループ9 finqa混合版（ベース: sft_lora.yaml。経緯コメントはそちらを参照）
+# 金融QA 1万件(s2_finqa.py --build 出力) + 既存 analysis/generation 385件のマルチタスクSFT。
+# 既存タスクを混ぜるのは商品市況RAGメタデータ能力の維持のため(評価は make eval の n=70 非退行で確認)。
+# 実行: make sft SFT_CFG=/pipeline/s4_sft/sft_finqa.yaml
+# 事前に prep_rl_data.py(既存分) と s2_finqa.py --build(finqa分) の両方が必要。
+sft:
+  max_num_epochs: 2            # 10,385件/バッチ32≈325step/epoch。2epochで~650step(1×L40S実測25s/step→約4.5h)
+  max_num_steps: 700
+  val_period: 50               # 325step/epochに合わせて間引き(10のままだとvalが13回/epoch)
+  val_batches: 8
+  val_global_batch_size: 16
+  val_micro_batch_size: 1
+  val_at_start: true           # 学習前のval loss=baseの位置を記録
+  val_at_end: true
+  seed: 42
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: /ckpt/sft
+  metric_name: "val:val_loss"
+  higher_is_better: false
+  keep_top_k: 2
+  save_period: 50              # spot中断前提で細かめに保存
+  checkpoint_must_save_by: null  # v0.6.0必須キー（時間ベースの強制保存。使わないのでnull）
+  save_optimizer: true
+
+policy:
+  # 既定=Nemotron-Nano-9B-v2-Japanese（gated・要HF規約同意。48GBでSFT/LoRA快適: docs/00）
+  # 4Bで先に配管検証する場合は Qwen/Qwen3-4B-Instruct-2507 等へ差し替え
+  model_name: nvidia/NVIDIA-Nemotron-Nano-9B-v2-Japanese
+  tokenizer:
+    name: ${policy.model_name}
+    # モデル既定のchat templateを使う。v0.6.0では null は「素通し（contentを連結するだけ）」の
+    # 意味になるため注意 — 既定テンプレートは "default" と明示する必要がある（実機確認済み）
+    chat_template: "default"
+    chat_template_kwargs: null
+  train_global_batch_size: 32
+  train_micro_batch_size: 1
+  # L40S 44GBではseq4096の活性化がOOM（実測）。2048ならanalysis系（最大~1000字+sys）は
+  # 全件収まる。generation系(~4000字,16件)は超過→loss_multiplier=0で自動無効化されるが、
+  # ループ2: 蒸留側でチャンクをk=2×700字に削減済み。generationサンプルは全体で最長
+  # ~2400字のため2560で全量が収まる。L40S実測: 4096はOOM・2048は余裕あり(loop-01-report)
+  max_total_sequence_length: 2560
+  precision: "bfloat16"
+
+  dtensor_cfg:
+    _v2: true
+    enabled: true
+    cpu_offload: false         # シングルGPUでは未実装（v0.6.0で NotImplementedError を実機確認）
+    sequence_parallel: false
+    activation_checkpointing: true    # 48GB安全側
+    tensor_parallel_size: 1
+    context_parallel_size: 1
+    dp_replicate_size: 1
+    custom_parallel_plan: null
+    automodel_kwargs: {}
+    lora_cfg:
+      enabled: true
+      target_modules: []
+      exclude_modules: []
+      match_all_linear: true
+      dim: 16                  # 旧sft_lora.yamlの r:16 / alpha:32 を踏襲
+      alpha: 32
+      dropout: 0.05
+      dropout_position: "post"
+      lora_A_init: "xavier"
+      use_triton: true
+
+  # Megatronバックエンドは不使用（DTensor使用）。ただし v0.6.0 の sft.py は
+  # enabled / use_linear_ce_fusion_loss を .get なしで直接参照するため定義必須
+  megatron_cfg:
+    enabled: false
+    use_linear_ce_fusion_loss: false
+
+  dynamic_batching:
+    enabled: false
+    train_mb_tokens: ${mul:${policy.max_total_sequence_length}, ${policy.train_micro_batch_size}}
+    sequence_length_round: 64
+  sequence_packing:
+    enabled: false
+    train_mb_tokens: ${mul:${policy.max_total_sequence_length}, ${policy.train_micro_batch_size}}
+    algorithm: "modified_first_fit_decreasing"
+    sequence_length_round: 64
+  make_sequence_length_divisible_by: ${policy.dtensor_cfg.tensor_parallel_size}
+  max_grad_norm: 1.0
+
+  optimizer:
+    name: "torch.optim.AdamW"
+    kwargs:
+      lr: 5.0e-5               # ループ1の1e-4は304件に対し強め→半減（2e-5〜5e-5帯の上限）
+      weight_decay: 0.1
+      betas: [0.9, 0.98]
+      eps: 1e-5
+      foreach: false
+      fused: false
+
+data:
+  # v0.6.0 run_sft.py/sft.py の必須キー（無いと KeyError）
+  max_input_seq_length: ${policy.max_total_sequence_length}
+  add_bos: true
+  add_eos: true
+  shuffle: true
+  num_workers: 1
+  # true = userメッセージ末尾にassistantヘッダ（generation prompt）を含めて描画。
+  # 推論時(vLLM)と同じ境界で応答トークンが始まるため、chat template使用時はtrueが正
+  add_generation_prompt: true
+  # 2タスクを別データセットとして与える（system promptが異なるため）。
+  # prep_rl_data.py の出力（プロンプトは s6_eval と同一描画）。
+  train:
+    # finqa(主ボリューム1万件)。GRPO/heldout_finqaとは排他(s2_finqa.pyリーク検査が保証)
+    - dataset_name: ResponseDataset
+      data_path: /data/finqa/sft_finqa_train.jsonl
+      input_key: input
+      output_key: output
+      system_prompt_file: /data/finqa/prompts/finqa_chat_sys.txt
+    - dataset_name: ResponseDataset
+      data_path: /data/distilled/rl/sft_analysis_train.jsonl
+      input_key: input
+      output_key: output
+      system_prompt_file: /data/distilled/rl/prompts/label_sys.txt
+    - dataset_name: ResponseDataset
+      data_path: /data/distilled/rl/sft_generation_train.jsonl
+      input_key: input
+      output_key: output
+      system_prompt_file: /data/distilled/rl/prompts/answer_sys.txt
+  validation:
+    - dataset_name: ResponseDataset
+      data_path: /data/finqa/sft_finqa_valid.jsonl
+      input_key: input
+      output_key: output
+      system_prompt_file: /data/finqa/prompts/finqa_chat_sys.txt
+    - dataset_name: ResponseDataset
+      data_path: /data/distilled/rl/sft_analysis_valid.jsonl
+      input_key: input
+      output_key: output
+      system_prompt_file: /data/distilled/rl/prompts/label_sys.txt
+    - dataset_name: ResponseDataset
+      data_path: /data/distilled/rl/sft_generation_valid.jsonl
+      input_key: input
+      output_key: output
+      system_prompt_file: /data/distilled/rl/prompts/answer_sys.txt
+  default:
+    prompt_file: null
+    system_prompt_file: null
+    # 必須: 未指定だと "default"（math用プロセッサ）が使われてしまう（v0.6.0実機確認）
+    processor: "sft_processor"
+
+logger:                        # クローズド網: 外部SaaSなし（W&B不使用）
+  log_dir: /results/logs/sft
+  wandb_enabled: false
+  tensorboard_enabled: true
+  mlflow_enabled: true
+  swanlab_enabled: false
+  monitor_gpus: true
+  tensorboard:
+    log_dir: /results/tb/sft
+  mlflow:
+    experiment_name: nemo-sft
+    run_name: sft9-nemotron9b-lora-finqa
+    tracking_uri: ${oc.env:MLFLOW_TRACKING_URI,http://host.docker.internal:5000}
+  gpu_monitoring:
+    collection_interval: 10
+    flush_interval: 10
+
+cluster:
+  gpus_per_node: 1             # 48GB×1（Route 48GB）
+  num_nodes: 1

@@ -1,0 +1,21 @@
+# S6 finqa評価設定（ループ9）。使い方: make eval-finqa TAG=<base9|sft9|grpo9> [BASELINE=<tag>]
+# 合否の主基準は相対（finqa_score ≥ ベースライン実測 — ループ8で確立した非退行方式）。
+# 絶対閾値は最小限: finqa_number_found は「数値を答えられている」ことの健全性ゲートのみ。
+# 階段の実証 = base9 < sft9 < grpo9 の finqa_score 単調改善（docs/loop-09-report.md）。
+endpoint:
+  base_url: ${OPENAI_BASE_URL}
+  model: nemotron-gen
+suites:
+  - name: finqa_heldout             # s2_finqa.py --build が出力する評価専用セット（学習不使用）
+    path:
+      - /data/finqa/heldout_finqa.jsonl
+    thresholds:
+      finqa_number_found: 0.90      # 90%以上で数値解答が抽出できること（形式崩壊の検知）
+    baseline_thresholds:
+      finqa_score: 0.0              # 非退行（GRPO後はSFT後をbaselineに指定して改善を確認）
+    reference:
+      finqa_exact: 0.5              # 参考表示のみ・非ゲート
+report: /results
+notes: |
+  base→SFT→GRPOの各時点で `--tag base9|sft9|grpo9` を変えて実行し、results/eval_*.json を比較。
+  報酬(common/finqa.py score_finqa)と同一スコアラで採点するため、GRPOの訓練報酬と直接比較可能。
