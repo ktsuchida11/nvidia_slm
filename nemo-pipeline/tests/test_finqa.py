@@ -8,11 +8,13 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "common"))
 sys.path.insert(0, str(ROOT / "s5_rl"))
+sys.path.insert(0, str(ROOT / "s2_distillation"))
 
 from finqa import (extract_final_answer, has_answer_marker, parse_number,  # noqa: E402
                    parse_valued_number, score_finqa, score_value)
 from reward import reward_finance_qa  # noqa: E402
 from finance_env import score_batch  # noqa: E402
+from s2_finqa import format_answer_line  # noqa: E402
 import json  # noqa: E402
 
 
@@ -90,6 +92,24 @@ def test_score_batch_dispatch_finqa():
     scores = score_batch(["<think>思考</think>答え: 42.5%", "答え: 99%"], [gt, gt])
     assert scores[0] == 1.0                             # <think>除去後に採点される
     assert scores[1] < scores[0]                        # グループ内に報酬差が出る
+
+
+def test_format_answer_line():
+    # 整数値は小数点以下を落とす・単位を付す
+    assert format_answer_line({"value": 1.34e8, "unit": "円"}) == "答え: 134000000円"
+    # 小数値は保持
+    assert format_answer_line({"value": 42.5, "unit": "%"}) == "答え: 42.5%"
+    # 単位 None / その他 は数値のみ
+    assert format_answer_line({"value": 8900.0, "unit": None}) == "答え: 8900"
+    assert format_answer_line({"value": 2.5, "unit": "その他"}) == "答え: 2.5"
+
+
+def test_format_answer_line_roundtrips_through_scorer():
+    # fmt教示で付けた「答え:」行が、同一verifyでscore_finqa満点になること(訓練=評価の整合)
+    for verify in ({"value": 1.34e8, "unit": "円"}, {"value": 42.5, "unit": "%"},
+                   {"value": 2.5, "unit": "倍"}):
+        line = "回答本文です。\n\n" + format_answer_line(verify)
+        assert score_finqa(line, verify) == 1.0
 
 
 def test_score_batch_dispatch_analysis_unchanged():
