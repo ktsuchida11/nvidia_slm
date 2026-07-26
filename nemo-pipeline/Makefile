@@ -32,7 +32,7 @@ MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 # データビューア用ポート（衝突時は hostpath.mk で上書き）
 VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch curate distill relabel lint-labels relabel-lint augment eval-augment distill-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry guardrails guardrails-test tracking tensorboard viewer clean
+.PHONY: setup extract caption fetch curate distill relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-test tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -70,9 +70,9 @@ caption:             ## 図/スキャンをフロンティアAPI(Claude vision)�
 	   python /pipeline/s1_curation/caption_figures.py --in /docs_in --out /data/raw \
 	   --license $(or $(LICENSE),own) --model $(or $(MODEL),claude-sonnet-4-6) $(CAPTION_FLAGS)"
 
-fetch:               ## 金融データセット取得（商用可のみ。repo/licenseはHFカードで確認。docs/03参照。LIMIT=Nで件数制限）
+fetch:               ## 金融データセット取得（商用可のみ。repo/licenseはHFカードで確認。docs/03参照。LIMIT=Nで件数制限、FIELDS=CSVでQA構造保持）
 	$(RUN) $(PY_IMG) bash -lc "(pip -q install datasets huggingface_hub 2>/dev/null || true) && \
-	  python /pipeline/s1_curation/fetch_dataset.py --repo $(REPO) --license $(LICENSE) --out /data/raw $(if $(LIMIT),--limit $(LIMIT)) $(if $(CONFIG),--config $(CONFIG))"
+	  python /pipeline/s1_curation/fetch_dataset.py --repo $(REPO) --license $(LICENSE) --out /data/raw $(if $(LIMIT),--limit $(LIMIT)) $(if $(CONFIG),--config $(CONFIG)) $(if $(FIELDS),--keep-fields $(FIELDS))"
 
 curate:              ## S1 収集・管理（CPUで可。Curator委譲は --engine curator）
 	$(RUN) $(PY_IMG) python /pipeline/s1_curation/s1_curate.py --in /data/raw --out /data/curated
@@ -100,6 +100,19 @@ distill-dry:         ## S2 配管検証（API不要・数秒）
 	$(RUN) $(PY_IMG) python /pipeline/s2_distillation/s2_distill.py \
 	  --in /data/curated --out /data/distilled --dry-run \
 	  --gen-chunks $(or $(GEN_CHUNKS),2) --chunk-chars $(or $(CHUNK_CHARS),700)
+
+# --- ループ9: 金融QA(finqa)データ構築。先に make fetch REPO=... FIELDS=user,assistant ---
+finqa-filter:        ## S2 finqa品質選別（機械翻訳QA→教師judge。要ANTHROPIC_API_KEY。FILTER_MODEL既定claude-haiku-4-5）
+	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL -e FILTER_MODEL $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
+	  python /pipeline/s2_distillation/s2_finqa.py --src /data/raw --out /data/finqa --filter \
+	  --target $(or $(TARGET),14000)"
+finqa-build:         ## S2 finqa SFT/GRPO/heldout構築（教師verifyで数値答え正規化+リーク検査。要ANTHROPIC_API_KEY）
+	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
+	  python /pipeline/s2_distillation/s2_finqa.py --src /data/raw --out /data/finqa --build \
+	  --n-sft $(or $(N_SFT),10000) --n-grpo $(or $(N_GRPO),2500) --n-heldout $(or $(N_HELDOUT),300)"
+finqa-dry:           ## S2 finqa配管検証（API不要・数秒）
+	$(RUN) $(PY_IMG) python /pipeline/s2_distillation/s2_finqa.py \
+	  --src /data/raw --out /data/finqa --filter --build --dry-run
 
 # --- 実験トラッキング（クローズド網: 自前MLflow。外部送信なし） ----------------
 build-tools:         ## 閉域準備: 依存焼き込みツールイメージをbuild（オンライン環境で一度実行）
@@ -171,8 +184,8 @@ dapt:                ## S3 継続事前学習（任意）
 	$(RUN) $(GPU) $(TRACK) --shm-size=16g $(NEMO_IMG) bash /pipeline/s3_pretraining/run_dapt.sh
 prep-rl:             ## S4/S5用データ変換（distilled → NeMo-RL ResponseDataset形式。CPUで可）
 	$(RUN) $(PY_IMG) python /pipeline/s5_rl/prep_rl_data.py --in /data/distilled --out /data/distilled/rl
-sft:                 ## S4 SFT/LoRA（NeMo-RL: examples/run_sft.py + s4_sft/sft_lora.yaml）
-	$(RUN) $(GPU) $(TRACK) --shm-size=16g -e RL_REF=$(RL_REF) \
+sft:                 ## S4 SFT/LoRA（NeMo-RL: examples/run_sft.py。設定差し替えは SFT_CFG=/pipeline/s4_sft/sft_finqa.yaml）
+	$(RUN) $(GPU) $(TRACK) --shm-size=16g -e RL_REF=$(RL_REF) -e SFT_CFG \
 	  -v $${HF_HOME:-$$HOME/.cache/huggingface}:/root/.cache/huggingface \
 	  -e RAY_memory_monitor_refresh_ms=0 \
 	  -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
@@ -204,6 +217,12 @@ eval:                ## S6 本評価（exit 0=合格 / 2=閾値未達）。相�
 eval-dry:            ## S6 配管検証（エンドポイント不要・全指標満点になるはず）
 	$(RUN) $(PY_IMG) bash -lc "(pip -q install pyyaml 2>/dev/null || true) && \
 	  python /pipeline/s6_evaluation/s6_eval.py --config /pipeline/s6_evaluation/eval.yaml --mode dry --tag dry"
+eval-finqa:          ## S6 finqa評価（ループ9。TAG=base9|sft9|grpo9、改善確認は BASELINE=<tag>）
+	$(RUN) -e OPENAI_BASE_URL -e OPENAI_API_KEY -e EVAL_SYS_PREFIX -e EVAL_CHAT_KWARGS $(PY_IMG) bash -lc "(pip -q install pyyaml 2>/dev/null || true) && \
+	  python /pipeline/s6_evaluation/s6_eval.py --config /pipeline/s6_evaluation/eval_finqa.yaml --tag $(TAG) $(if $(BASELINE),--baseline $(BASELINE))"
+eval-finqa-dry:      ## S6 finqa配管検証（エンドポイント不要）
+	$(RUN) $(PY_IMG) bash -lc "(pip -q install pyyaml 2>/dev/null || true) && \
+	  python /pipeline/s6_evaluation/s6_eval.py --config /pipeline/s6_evaluation/eval_finqa.yaml --mode dry --tag finqa_dry"
 
 # --- S7 ガードレール ----------------------------------------------------------
 GUARD_PORT ?= 8100

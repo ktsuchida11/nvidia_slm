@@ -1,0 +1,338 @@
+# S5 GRPO — finqa(金融QA・数値検証可能報酬)タスク用設定（ループ9）。
+# ベース: grpo_analysis.yaml（実機検証済みの4GPU非colocated・断片化対策・思考抑止を継承。
+# 各設定の経緯コメントは grpo_analysis.yaml を参照）。差分は data(finqaセット)・step数・報酬タスク。
+# ★ループ8の教訓 = 帯域診断ゲート（must）: 本走前に2-3stepで打ち切り、
+#   (1) step1 の Avg Reward が 0.5〜0.9（0.0x台=全滅/形式未習得、0.95超=暗記済みで学習余地なし）
+#   (2) finance_grounding の frac_full_reward < 0.7 かつ frac_no_reward < 0.5
+#   を確認してから max_num_steps を戻して本走する。外れたらGPUを止めてデータ難易度を再調整。
+# ★GRPO訓練セット(grpo_finqa_train.jsonl)はSFTセットと排他（s2_finqa.pyのリーク検査が保証）。
+#   ループ8はSFT訓練セットと同一の316プロンプトで回して暗記済み=advantage 0の無学習だった
+grpo:
+  num_prompts_per_step: 16
+  num_generations_per_prompt: 8
+  max_rollout_turns: 1
+  max_num_epochs: 2
+  max_num_steps: 320   # 2,500プロンプト/16=157step/epoch×2。帯域診断時は 3 に下げて起動
+  normalize_rewards: true
+  use_leave_one_out_baseline: true
+  val_period: 20       # 320stepではvalオーバーヘッドを抑える(analysisの40step用10から変更)
+  val_at_start: true
+  val_at_end: false
+  overlong_filtering: false
+  max_val_samples: 64
+  val_batch_size: 64
+  seed: 42
+  use_dynamic_sampling: false
+  dynamic_sampling_max_gen_batches: 10
+  batch_multiplier: 1
+  reward_shaping:
+    enabled: false
+    overlong_buffer_length: 128
+    overlong_buffer_penalty: 1
+    max_response_length: ${policy.max_total_sequence_length}
+    stop_properly_penalty_coef: null
+  adv_estimator:
+    name: grpo
+    normalize_rewards: ${grpo.normalize_rewards}
+    use_leave_one_out_baseline: ${grpo.use_leave_one_out_baseline}
+    minus_baseline: true
+  reward_scaling:
+    enabled: false
+    source_min: 0.0
+    source_max: 1.0
+    target_min: 0.0
+    target_max: 1.0
+  seq_logprob_error_threshold: null
+  # ループ8実機: 参照ポリシー(全重みのpinned CPUコピー≈18GB)とvLLM sleepのpinned≈18GBで
+  # 64GBホストでもRAM枯渇→スラッシング死。KL罰0と併せて参照logprobを省略し、
+  # run_grpo_finance.py が init_reference_model=False を注入して18GBを節約する。
+  # KL無しの逸脱リスクはLoRA(dim16)+lr 3e-7+40stepの小規模プローブでは許容範囲
+  skip_reference_policy_logprobs_calculation: true
+  async_grpo:
+    enabled: false
+    max_trajectory_age_steps: 1
+    in_flight_weight_updates: false
+    recompute_kv_cache_after_weight_updates: false
+loss_fn:
+  reference_policy_kl_penalty: 0.0   # skip_reference_policy_logprobs_calculation の必須条件
+  reference_policy_kl_type: k3
+  kl_input_clamp_value: 20.0
+  kl_output_clamp_value: 10.0
+  ratio_clip_min: 0.2
+  ratio_clip_max: 0.2
+  ratio_clip_c: null
+  use_on_policy_kl_approximation: false
+  use_importance_sampling_correction: false
+  truncated_importance_sampling_ratio: null
+  truncated_importance_sampling_ratio_min: null
+  truncated_importance_sampling_type: tis
+  sequence_level_importance_ratios: false
+  token_level_loss: true
+  force_on_policy_ratio: false
+  use_kl_in_reward: false
+checkpointing:
+  enabled: true
+  checkpoint_dir: /ckpt/grpo
+  metric_name: train:reward
+  higher_is_better: true
+  keep_top_k: 2
+  save_period: 20
+  checkpoint_must_save_by: null
+  model_save_format: safetensors
+  save_consolidated: false
+  save_optimizer: true
+policy:
+  model_name: /ckpt/sft/hf
+  tokenizer:
+    name: ${policy.model_name}
+    # 思考モード抑止(必須)。null(=テンプレート既定の思考ON)だと生成が<think>で始まり
+    # 400トークン上限を思考の途中で使い切ってJSONに到達せず、全報酬0で学習が空振りする
+    # (ループ8実機: 36step完走したがAvg Reward≈0・平均生成長=上限張り付きで発覚)。
+    # evalのEVAL_CHAT_KWARGS='{"enable_thinking": false}'と同じ配備時契約に揃える
+    chat_template_kwargs:
+      enable_thinking: false
+  hf_config_overrides: {}
+  train_global_batch_size: 128
+  train_micro_batch_size: 1
+  generation_batch_size: 16
+  logprob_batch_size: ${policy.train_micro_batch_size}
+  max_total_sequence_length: 2048
+  precision: bfloat16
+  logprob_chunk_size: null
+  offload_optimizer_for_logprob: false
+  dtensor_cfg:
+    _v2: true
+    enabled: true
+    # ループ8実機(L40S 44.4GB×2で学習): cpu_offload+expandable_segmentsの2点セットで完走。
+    # 3回連続で同一地点(refitのpacked torch.cat ~2GB連続確保)がOOM。原因はtrain→refitサイクルが
+    # 蓄積させるアロケータ断片化(~15GB)で、NeMo-RL上流も既知と明記し公式レシピが同じ対策を同梱
+    # (grpo-qwen3.5-*-automodel-*.yaml)。max_split_size_mb:64は効果なし(断片化量が不変)だった。
+    # env_varsはpolicyワーカー限定注入(lm_policy.py L147)のためvLLMのCuMemAllocatorと衝突しない。
+    # 副作用: refitが最大~5倍遅くなる(上流注記)。80GB級GPUなら両方falseに戻してよい
+    cpu_offload: true
+    env_vars:
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    sequence_parallel: false
+    activation_checkpointing: true
+    tensor_parallel_size: 1
+    context_parallel_size: 1
+    custom_parallel_plan: null
+    automodel_kwargs: {}
+    lora_cfg:
+      enabled: true
+      target_modules: []
+      exclude_modules: []
+      match_all_linear: true
+      dim: 16
+      alpha: 32
+      dropout: 0.0
+      dropout_position: post
+      lora_A_init: xavier
+      use_triton: true
+  megatron_cfg:
+    enabled: false
+    force_reconvert_from_hf: false
+    empty_unused_memory_level: 1
+    activation_checkpointing: false
+    converter_type: Qwen2ForCausalLM
+    tensor_model_parallel_size: 1
+    expert_tensor_parallel_size: 1
+    expert_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    num_layers_in_first_pipeline_stage: null
+    num_layers_in_last_pipeline_stage: null
+    context_parallel_size: 1
+    pipeline_dtype: ${policy.precision}
+    sequence_parallel: false
+    freeze_moe_router: true
+    moe_router_dtype: fp64
+    moe_router_load_balancing_type: none
+    moe_router_bias_update_rate: 0.0
+    moe_permute_fusion: false
+    apply_rope_fusion: true
+    bias_activation_fusion: true
+    defer_fp32_logits: false
+    moe_per_layer_logging: false
+    moe_enable_deepep: false
+    moe_token_dispatcher_type: alltoall
+    moe_shared_expert_overlap: false
+    gradient_accumulation_fusion: false
+    peft:
+      enabled: false
+      target_modules: []
+      exclude_modules: []
+      dim: 8
+      alpha: 32
+      dropout: 0.0
+      dropout_position: post
+      lora_A_init_method: xavier
+      lora_B_init_method: zero
+      a2a_experimental: false
+      lora_dtype: None
+    optimizer:
+      optimizer: adam
+      lr: 5.0e-06
+      min_lr: 5.0e-07
+      weight_decay: 0.01
+      bf16: true
+      fp16: false
+      params_dtype: float32
+      adam_beta1: 0.9
+      adam_beta2: 0.999
+      adam_eps: 1e-8
+      sgd_momentum: 0.9
+      use_distributed_optimizer: true
+      use_precision_aware_optimizer: true
+      clip_grad: ${policy.max_grad_norm}
+      optimizer_cpu_offload: false
+      optimizer_offload_fraction: 0.0
+    scheduler:
+      start_weight_decay: ${policy.megatron_cfg.optimizer.weight_decay}
+      end_weight_decay: ${policy.megatron_cfg.optimizer.weight_decay}
+      weight_decay_incr_style: constant
+      lr_decay_style: constant
+      lr_decay_iters: 1000
+      lr_warmup_iters: 13
+      lr_warmup_init: 5.0e-07
+    distributed_data_parallel_config:
+      grad_reduce_in_fp32: false
+      overlap_grad_reduce: true
+      overlap_param_gather: true
+      use_custom_fsdp: false
+      data_parallel_sharding_strategy: optim_grads_params
+    fp8_cfg:
+      enabled: false
+      fp8: e4m3
+      fp8_recipe: blockwise
+      fp8_param: false
+    env_vars: null
+  draft:
+    enabled: false
+    model_name: null
+    loss_weight: 0.1
+    num_layers: null
+    aux_layer_indices: null
+  dynamic_batching:
+    enabled: false
+    train_mb_tokens: ${mul:${policy.max_total_sequence_length}, ${policy.train_micro_batch_size}}
+    logprob_mb_tokens: ${mul:${policy.max_total_sequence_length}, ${policy.logprob_batch_size}}
+    sequence_length_round: 64
+  sequence_packing:
+    enabled: true
+    train_mb_tokens: ${mul:${policy.max_total_sequence_length}, ${policy.train_micro_batch_size}}
+    logprob_mb_tokens: ${mul:${policy.max_total_sequence_length}, ${policy.logprob_batch_size}}
+    algorithm: modified_first_fit_decreasing
+    sequence_length_round: 64
+  make_sequence_length_divisible_by: ${policy.dtensor_cfg.tensor_parallel_size}
+  max_grad_norm: 1.0
+  optimizer:
+    name: torch.optim.AdamW
+    kwargs:
+      lr: 3.0e-07
+      weight_decay: 0.01
+      betas:
+      - 0.9
+      - 0.999
+      eps: 1e-8
+      foreach: false
+      fused: false
+  scheduler:
+  - name: torch.optim.lr_scheduler.LinearLR
+    kwargs:
+      start_factor: 0.1
+      end_factor: 1.0
+      total_iters: 13
+  - name: torch.optim.lr_scheduler.ConstantLR
+    kwargs:
+      factor: 1.0
+      total_iters: 10000000000
+  - milestones:
+    - 13
+  generation:
+    backend: vllm
+    max_new_tokens: 400
+    temperature: 1.0
+    top_p: 1.0
+    top_k: null
+    stop_token_ids: null
+    stop_strings: null
+    mcore_generation_config:
+      buffer_size_gb: 10
+      num_cuda_graphs: 4
+      block_size_tokens: 256
+      use_cuda_graphs_for_non_decode_steps: true
+      enable_chunked_prefill: true
+      unified_memory_level: 0
+      max_tokens: 16384
+    vllm_cfg:
+      async_engine: false
+      precision: ${policy.precision}
+      kv_cache_dtype: auto
+      tensor_parallel_size: 2  # vLLM専用2GPUをTPで束ねる(9B重みが9GB/GPUに割れKV余裕も倍増)
+      pipeline_parallel_size: 1
+      expert_parallel_size: 1
+      gpu_memory_utilization: 0.6  # 0.4は9B重み展開でKVブロック確保不能(単一GPU実機エラー)。非colocatedの専用GPUなら上げる余地はあるがTP=2では0.6で十分なため既知の安全値を維持
+      max_model_len: ${policy.max_total_sequence_length}
+      enforce_eager: false
+      use_deep_gemm: false
+      num_last_layers_in_bf16: 0
+      num_first_layers_in_bf16: 0
+      enable_vllm_metrics_logger: true
+      vllm_metrics_logger_interval: 0.5
+    vllm_kwargs: {}
+    colocated:
+      enabled: false  # 非colocated: vLLMを専用GPUへ分離。fp32マスター重み(33.3GB)とvLLMの同居問題が構造ごと消える
+      resources:
+        gpus_per_node: 2  # vLLM専用GPU数。残り(4-2=2)が学習用DP=2になる
+        num_nodes: null   # 単一ノードではnull必須(grpo.py L470)
+data:
+  max_input_seq_length: ${policy.max_total_sequence_length}
+  shuffle: true
+  num_workers: 1
+  use_multiple_dataloader: false
+  train:
+    dataset_name: ResponseDataset
+    split_validation_size: 0.05
+    seed: ${grpo.seed}
+    data_path: /data/finqa/grpo_finqa_train.jsonl
+    input_key: input
+    output_key: ground_truth
+  validation: null
+  default:
+    prompt_file: null
+    # FINQA_SYS(s2_finqa.py --build が出力)。S6評価(eval_finqa.yaml)と同一プロンプト=配備時契約
+    system_prompt_file: /data/finqa/prompts/finqa_sys.txt
+    processor: math_hf_data_processor
+    env_name: finance_grounding
+env:
+  math:
+    num_workers: 8
+    math_verify_impl: hf_math_verify
+  finance_grounding:
+    num_workers: 2
+logger:
+  log_dir: /results/logs/grpo
+  num_val_samples_to_print: 2
+  wandb_enabled: false
+  tensorboard_enabled: true
+  mlflow_enabled: true
+  swanlab_enabled: false
+  monitor_gpus: true
+  wandb:
+    project: grpo-dev
+    name: grpo-dev-logger
+  swanlab:
+    project: grpo-dev
+    name: grpo-dev-logger
+  tensorboard:
+    log_dir: /results/tb/grpo
+  mlflow:
+    experiment_name: nemo-rl-grpo
+    run_name: grpo-finqa
+    tracking_uri: ${oc.env:MLFLOW_TRACKING_URI,http://host.docker.internal:5000}
+  gpu_monitoring:
+    collection_interval: 10
+    flush_interval: 10
+cluster:
+  gpus_per_node: 4  # g6e.12xlarge L40S×4（vLLM 2 + 学習 2 に分割。上部★コメント参照）
+  num_nodes: 1
