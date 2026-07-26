@@ -109,7 +109,7 @@ finqa-filter:        ## S2 finqa品質選別（機械翻訳QA→教師judge。�
 finqa-build:         ## S2 finqa SFT/GRPO/heldout構築（教師verifyで数値答え正規化+リーク検査。要ANTHROPIC_API_KEY）
 	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
 	  python /pipeline/s2_distillation/s2_finqa.py --src /data/raw --out /data/finqa --build \
-	  --n-sft $(or $(N_SFT),10000) --n-grpo $(or $(N_GRPO),2500) --n-heldout $(or $(N_HELDOUT),300)"
+	  --n-sft $(or $(N_SFT),10000) --n-grpo $(or $(N_GRPO),2500) --n-heldout $(or $(N_HELDOUT),300) --n-fmt $(or $(N_FMT),1500)"
 finqa-dry:           ## S2 finqa配管検証（API不要・数秒）
 	$(RUN) $(PY_IMG) python /pipeline/s2_distillation/s2_finqa.py \
 	  --src /data/raw --out /data/finqa --filter --build --dry-run

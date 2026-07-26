@@ -18,10 +18,17 @@
 出力(--out 配下):
   filtered.jsonl                       {"q","a","meta"}              品質選別済みプール
   sft_finqa_{train,valid}.jsonl        {"input","output"}            NeMo-RL ResponseDataset形式
+  sft_finqa_fmt_train.jsonl            {"input","output"}            回答末尾に「答え:」行を付与・FINQA_SYSで訓練
   grpo_finqa_train.jsonl               {"input","ground_truth"}      gt={"finqa":{value,unit,tolerance}}
   heldout_finqa.jsonl                  s6_eval形式(meta.task=finqa)  評価専用・学習不使用
   prompts/finqa_sys.txt, finqa_chat_sys.txt
   finqa_stats.json
+
+ループ9 round-1 の再SFT教訓:
+  - 単一システムプロンプト(FINQA_CHAT_SYS)のみで632step SFTすると訓練時プロンプトに過剰特化し、
+    評価時の別プロンプト(FINQA_SYS)で分布崩壊(トークンサラダ)。対策として検証済みの一部を
+    FINQA_SYS + 「答え:」形式で訓練する fmt セット(sft_finqa_fmt_train.jsonl)を混ぜ、
+    プロンプト多様性と最終行形式を同時に教える。fmt項目はSFT平文プールから除外しリーク安全を維持。
 """
 from __future__ import annotations
 import argparse, hashlib, json, logging, os, pathlib, random, re, sys, time, unicodedata
@@ -228,6 +235,17 @@ def verify_numeric(a, client, cands: list[dict], need: int) -> list[dict]:
     return verified[:need]
 
 
+def format_answer_line(verify: dict) -> str:
+    """検証済み value/unit から「答え: <値><単位>」行を作る(fmt SFT の形式教示用)。
+    値は整数なら小数点以下を落とし、単位が None / その他 なら数値のみ。"""
+    v = float(verify["value"])
+    val = str(int(v)) if v == int(v) else str(v)
+    unit = verify.get("unit")
+    if unit in (None, "その他"):
+        unit = ""
+    return f"答え: {val}{unit}"
+
+
 def run_build(a, client) -> None:
     out = pathlib.Path(a.out)
     fp = out / "filtered.jsonl"
@@ -240,26 +258,30 @@ def run_build(a, client) -> None:
     # 数値答え候補(回答に単位・倍率付きの数値があるもの)を教師verifyへ。目標 = GRPO + heldout
     cands = [c for c in pool if parse_valued_number(c["a"])]
     log.info("数値答え候補 %d/%d件", len(cands), len(pool))
-    need = a.n_grpo + a.n_heldout
+    need = a.n_grpo + a.n_heldout + a.n_fmt
     verified = verify_numeric(a, client, cands, need)
     if len(verified) < need:
-        log.warning("verify不足: %d/%d — n-grpo/n-heldoutを下げるか候補を増やす(fetch LIMIT拡大 or "
+        log.warning("verify不足: %d/%d — n-grpo/n-heldout/n-fmtを下げるか候補を増やす(fetch LIMIT拡大 or "
                     "EDINET-Bench数値からの教師生成を検討)", len(verified), need)
     rng.shuffle(verified)
+    # 割当: heldout(評価) → grpo(RL) → fmt(形式教示SFT)。すべて検証済みで互いに排他
     heldout = verified[:a.n_heldout]
     grpo = verified[a.n_heldout:a.n_heldout + a.n_grpo]
+    fmt = verified[a.n_heldout + a.n_grpo:a.n_heldout + a.n_grpo + a.n_fmt]
 
-    # SFT = GRPO/heldoutに使った質問を除外(ループ8欠陥1: SFTと同一プロンプトのGRPOは無学習)
-    used = {c["h"] for c in heldout} | {c["h"] for c in grpo}
+    # SFT平文 = GRPO/heldout/fmtに使った質問を除外
+    # (ループ8欠陥1: SFTと同一プロンプトのGRPOは無学習 / fmtは同一質問を別形式で持つため二重計上を避ける)
+    used = {c["h"] for c in heldout} | {c["h"] for c in grpo} | {c["h"] for c in fmt}
     sft_pool = [c for c in pool if c["h"] not in used]
     sft = sft_pool[:a.n_sft]
     n_valid = min(max(50, int(len(sft) * 0.02)), max(1, len(sft) // 10))
     sft_valid, sft_train = sft[:n_valid], sft[n_valid:]
 
-    # リーク検査: 3セットの正規化質問は互いに排他(違反はビルド失敗)
+    # リーク検査: 4セットの正規化質問は互いに排他(違反はビルド失敗)
     sets = {"sft": {norm_q(c["q"]) for c in sft}, "grpo": {norm_q(c["q"]) for c in grpo},
-            "heldout": {norm_q(c["q"]) for c in heldout}}
-    for x, y in (("sft", "grpo"), ("sft", "heldout"), ("grpo", "heldout")):
+            "heldout": {norm_q(c["q"]) for c in heldout}, "fmt": {norm_q(c["q"]) for c in fmt}}
+    for x, y in (("sft", "grpo"), ("sft", "heldout"), ("sft", "fmt"),
+                 ("grpo", "heldout"), ("grpo", "fmt"), ("heldout", "fmt")):
         leak = sets[x] & sets[y]
         if leak:
             log.error("リーク検出 %s∩%s=%d件 (例: %s)", x, y, len(leak), list(leak)[:2]); sys.exit(1)
@@ -273,6 +295,11 @@ def run_build(a, client) -> None:
     with (out / "sft_finqa_valid.jsonl").open("w", encoding="utf-8") as w:
         for c in sft_valid:
             w.write(json.dumps({"input": c["q"], "output": c["a"]}, ensure_ascii=False) + "\n")
+    # fmt SFT: 回答末尾に検証済みの「答え:」行を付与し FINQA_SYS で訓練(形式教示+プロンプト多様性)
+    with (out / "sft_finqa_fmt_train.jsonl").open("w", encoding="utf-8") as w:
+        for c in fmt:
+            out_text = c["a"].rstrip() + "\n\n" + format_answer_line(c["verify"])
+            w.write(json.dumps({"input": c["q"], "output": out_text}, ensure_ascii=False) + "\n")
     with (out / "grpo_finqa_train.jsonl").open("w", encoding="utf-8") as w:
         for c in grpo:
             w.write(json.dumps({"input": c["q"],
@@ -286,10 +313,10 @@ def run_build(a, client) -> None:
     stats = json.loads((out / "finqa_stats.json").read_text(encoding="utf-8")) \
         if (out / "finqa_stats.json").exists() else {}
     stats.update(stage="build", numeric_candidates=len(cands), verified=len(verified),
-                 sft_train=len(sft_train), sft_valid=len(sft_valid),
+                 sft_train=len(sft_train), sft_valid=len(sft_valid), sft_fmt=len(fmt),
                  grpo=len(grpo), heldout=len(heldout), dry_run=a.dry_run, seed=SEED)
     (out / "finqa_stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
-    log.info("build done: %s", {k: stats[k] for k in ("sft_train", "sft_valid", "grpo", "heldout")})
+    log.info("build done: %s", {k: stats[k] for k in ("sft_train", "sft_valid", "sft_fmt", "grpo", "heldout")})
 
 
 def main() -> None:
@@ -304,6 +331,8 @@ def main() -> None:
     ap.add_argument("--n-sft", type=int, default=10000)
     ap.add_argument("--n-grpo", type=int, default=2500)
     ap.add_argument("--n-heldout", type=int, default=300)
+    ap.add_argument("--n-fmt", type=int, default=1500,
+                    help="FINQA_SYS+「答え:」形式で訓練するfmt SFT件数(プロンプト多様性・形式教示)")
     a = ap.parse_args()
     client = None
     if not a.dry_run:

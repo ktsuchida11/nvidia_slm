@@ -1,12 +1,18 @@
 # S4 SFT/LoRA — ループ9 finqa混合版（ベース: sft_lora.yaml。経緯コメントはそちらを参照）
-# 金融QA 1万件(s2_finqa.py --build 出力) + 既存 analysis/generation 385件のマルチタスクSFT。
+# 金融QA 1万件(s2_finqa.py --build 出力) + fmtセット(FINQA_SYS+「答え:」形式)
+#   + 既存 analysis/generation 385件のマルチタスクSFT。
 # 既存タスクを混ぜるのは商品市況RAGメタデータ能力の維持のため(評価は make eval の n=70 非退行で確認)。
 # 実行: make sft SFT_CFG=/pipeline/s4_sft/sft_finqa.yaml
 # 事前に prep_rl_data.py(既存分) と s2_finqa.py --build(finqa分) の両方が必要。
+#
+# round-1 の失敗と対策(loop-09-report参照):
+#   632step×lr5e-5 で訓練時プロンプトに過剰特化 → 評価時の別プロンプトで分布崩壊(トークンサラダ)。
+#   ①enable_thinking:false を明示(sft_lora.yamlのnull継承=思考ON描画の非対称を解消)
+#   ②lr 5e-5→1e-5・2ep→1ep でドリフト抑制(loop-7水準へ) ③fmtセットでプロンプト多様性+形式教示
 sft:
-  max_num_epochs: 2            # 10,385件/バッチ32≈325step/epoch。2epochで~650step(1×L40S実測25s/step→約4.5h)
-  max_num_steps: 700
-  val_period: 50               # 325step/epochに合わせて間引き(10のままだとvalが13回/epoch)
+  max_num_epochs: 1            # round-1の過剰特化を受け1epochへ。~11,900件/バッチ32≈約372step(実測25s/step→約2.6h)
+  max_num_steps: 450
+  val_period: 50               # ~372step/epochに合わせて間引き(10のままだとvalが多すぎる)
   val_batches: 8
   val_global_batch_size: 16
   val_micro_batch_size: 1
@@ -33,7 +39,9 @@ policy:
     # モデル既定のchat templateを使う。v0.6.0では null は「素通し（contentを連結するだけ）」の
     # 意味になるため注意 — 既定テンプレートは "default" と明示する必要がある（実機確認済み）
     chat_template: "default"
-    chat_template_kwargs: null
+    # enable_thinking:false を明示。sft_lora.yaml の null 継承は思考ON描画になり、
+    # 評価(EVAL_CHAT_KWARGS enable_thinking:false)と非対称→round-1崩壊の一因(GRPOはPR#40で解消済)
+    chat_template_kwargs: {enable_thinking: false}
   train_global_batch_size: 32
   train_micro_batch_size: 1
   # L40S 44GBではseq4096の活性化がOOM（実測）。2048ならanalysis系（最大~1000字+sys）は
@@ -87,7 +95,7 @@ policy:
   optimizer:
     name: "torch.optim.AdamW"
     kwargs:
-      lr: 5.0e-5               # ループ1の1e-4は304件に対し強め→半減（2e-5〜5e-5帯の上限）
+      lr: 1.0e-5               # round-1の5e-5×632stepは過剰特化→1e-5へ(loop-7水準・ドリフト抑制)
       weight_decay: 0.1
       betas: [0.9, 0.98]
       eps: 1e-5
@@ -113,6 +121,13 @@ data:
       input_key: input
       output_key: output
       system_prompt_file: /data/finqa/prompts/finqa_chat_sys.txt
+    # fmtセット: 同じ金融QAを FINQA_SYS + 「答え:」形式で訓練。プロンプト多様性で過剰特化を防ぎ、
+    # 評価時プロンプト(FINQA_SYS)と最終行形式を明示的に学習(sft_finqa_trainとは排他=リーク検査保証)
+    - dataset_name: ResponseDataset
+      data_path: /data/finqa/sft_finqa_fmt_train.jsonl
+      input_key: input
+      output_key: output
+      system_prompt_file: /data/finqa/prompts/finqa_sys.txt
     - dataset_name: ResponseDataset
       data_path: /data/distilled/rl/sft_analysis_train.jsonl
       input_key: input
