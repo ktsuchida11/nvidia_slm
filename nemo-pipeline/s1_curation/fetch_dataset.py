@@ -17,7 +17,8 @@
 """
 import argparse, json, pathlib
 
-def main(repo: str, license_: str, out: str, limit: int, config: str | None = None):
+def main(repo: str, license_: str, out: str, limit: int, config: str | None = None,
+         keep_fields: str | None = None):
     from datasets import get_dataset_split_names, load_dataset  # pip install datasets
     try:
         ds = load_dataset(repo, config, split="train")
@@ -27,6 +28,7 @@ def main(repo: str, license_: str, out: str, limit: int, config: str | None = No
         ds = load_dataset(repo, config, split=splits[0])
     out_p = pathlib.Path(out); out_p.mkdir(parents=True, exist_ok=True)
     n = 0
+    keep = [k.strip() for k in keep_fields.split(",")] if keep_fields else []
     safe = repo.replace("/", "__") + (f"__{config}" if config else "")
     with (out_p / f"{safe}.jsonl").open("w", encoding="utf-8") as w:
         for row in ds:
@@ -34,9 +36,11 @@ def main(repo: str, license_: str, out: str, limit: int, config: str | None = No
             text = "\n".join(str(row[k]) for k in ("instruction", "input", "output", "text", "question", "answer") if row.get(k))
             if not text.strip():
                 text = json.dumps(row, ensure_ascii=False)
-            w.write(json.dumps({"text": text,
-                                "meta": {"license": license_, "source": repo}},
-                               ensure_ascii=False) + "\n")
+            rec = {"text": text, "meta": {"license": license_, "source": repo}}
+            if keep:
+                # QA構造を保持(s2_finqa等の下流がtext平坦化では列対応を失うため)
+                rec["fields"] = {k: row.get(k) for k in keep}
+            w.write(json.dumps(rec, ensure_ascii=False) + "\n")
             n += 1
             if limit and n >= limit: break
     print(f"wrote {n} docs -> {out_p/(safe+'.jsonl')} (license={license_})")
@@ -50,4 +54,6 @@ if __name__ == "__main__":
     p.add_argument("--out", default="/data/raw")
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--config", default=None, help="データセットのconfig名（必要な場合のみ。例: EDINET-Benchのearnings_forecast）")
-    a = p.parse_args(); main(a.repo, a.license_, a.out, a.limit, a.config)
+    p.add_argument("--keep-fields", default=None,
+                   help="元カラムを構造のまま保持するCSV（例: user,assistant — finqa用。カラム名はHFカードで確認）")
+    a = p.parse_args(); main(a.repo, a.license_, a.out, a.limit, a.config, a.keep_fields)
