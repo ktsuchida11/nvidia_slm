@@ -4,13 +4,15 @@
 interfaces.EnvironmentReturn（2026-07時点 main）を正として実装。
 登録は run_grpo_finance.py が register_env("finance_grounding", ...) で行う。
 
-データ契約（prep_rl_data.py が生成する grpo_*_train.jsonl。中身のキーでタスクを判別）:
+データ契約（prep_rl_data.py / s2_finqa.py が生成する grpo_*_train.jsonl。中身のキーでタスクを判別）:
   generation: metadata["ground_truth"] = '{"chunk_labels": ["sample.jsonl#0", ...]}' (JSON文字列)
   analysis:   metadata["ground_truth"] = '{"label": {...ゴールドラベルJSON...}}' (JSON文字列)
+  finqa:      metadata["ground_truth"] = '{"finqa": {"value": 1.34e8, "unit": "円", "tolerance": 0.005}}'
 
 報酬（common/reward.py と同一関数）:
   generation = 0.5*source_exists + 0.2*citation_format + penalty
   analysis   = 0.2*schema + 0.15*sectors + 0.15*query_type + 0.5*date_range + penalty（ループ8）
+  finqa      = 0.1*数値抽出 + 0.1*「答え:」形式 + 0.8*相対誤差の連続減衰 + penalty（ループ9）
 Nemotron系のreasoningトレース(<think>...</think>)は採点前に除去する（docs/06の作法）。
 """
 from __future__ import annotations
@@ -23,7 +25,7 @@ from typing import Any, TypedDict
 
 _PIPELINE_DIR = os.environ.get("PIPELINE_DIR", "/pipeline")
 sys.path.insert(0, os.path.join(_PIPELINE_DIR, "common"))
-from reward import reward_analysis, reward_generation  # noqa: E402  (common/reward.py)
+from reward import reward_analysis, reward_finance_qa, reward_generation  # noqa: E402  (common/reward.py)
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
@@ -47,6 +49,8 @@ def score_batch(responses: list[str], ground_truths: list[str]) -> list[float]:
         ans = strip_reasoning(ans)
         if "label" in obj:
             scores.append(float(reward_analysis(ans, obj["label"])))
+        elif "finqa" in obj:
+            scores.append(float(reward_finance_qa(ans, obj["finqa"])))
         else:
             scores.append(float(reward_generation(ans, obj.get("chunk_labels", []))))
     return scores

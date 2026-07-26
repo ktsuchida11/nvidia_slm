@@ -56,3 +56,11 @@ def reward_analysis(ans: str, gold: dict) -> float:
     r += 0.15 if pred["query_type"] == gold["query_type"] else 0.0
     r += 0.5 if pred["date_range"] == gold["date_range"] else 0.0
     return r + base
+
+def reward_finance_qa(ans: str, verify: dict) -> float:
+    """金融QA(finqa)タスクの検証可能報酬(ループ9)。数値=相対誤差の連続減衰、
+    文字列=正規化類似。ループ8の全成分二値報酬はグループ内報酬差(GRPOの唯一の
+    学習信号)を潰した — 部分点を連続値にして「惜しい」生成に信号を流す。
+    verify仕様と抽出規約は common/finqa.py 参照。"""
+    from finqa import score_finqa  # 同ディレクトリ。呼び出し側のsys.path設定後に解決するため遅延import
+    return score_finqa(ans, verify) + penalty(ans)
