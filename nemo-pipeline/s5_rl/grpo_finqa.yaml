@@ -44,18 +44,22 @@ grpo:
     target_min: 0.0
     target_max: 1.0
   seq_logprob_error_threshold: null
-  # ループ8実機: 参照ポリシー(全重みのpinned CPUコピー≈18GB)とvLLM sleepのpinned≈18GBで
-  # 64GBホストでもRAM枯渇→スラッシング死。KL罰0と併せて参照logprobを省略し、
-  # run_grpo_finance.py が init_reference_model=False を注入して18GBを節約する。
-  # KL無しの逸脱リスクはLoRA(dim16)+lr 3e-7+40stepの小規模プローブでは許容範囲
-  skip_reference_policy_logprobs_calculation: true
+  # ループ9 round-2 で参照ポリシー/KLを有効化(false)。理由: grpo9(KL無し)が heldout で
+  # base正答を31問破壊>誤答21問修正=正味ドリフト劣化(train reward横ばい0.658→0.675と整合)。
+  # KLアンカーで base の正解分布を保持しつつ改善分を残す狙い。参照ポリシー≈18GB pinned CPUは
+  # 384GBホスト(g6e.12xlarge)なら余裕。run_grpo_finance._maybe_disable_reference_modelは
+  # 「skip=true かつ KL=0」の時のみ注入するので、false+KL>0 にすれば自動で参照ポリシーが有効化。
+  # ※64GBホストに戻す場合は true + KL0 へ戻すこと(注入が復活しRAM枯渇を防ぐ)
+  skip_reference_policy_logprobs_calculation: false
   async_grpo:
     enabled: false
     max_trajectory_age_steps: 1
     in_flight_weight_updates: false
     recompute_kv_cache_after_weight_updates: false
 loss_fn:
-  reference_policy_kl_penalty: 0.0   # skip_reference_policy_logprobs_calculation の必須条件
+  # ループ9 round-2: KLアンカー有効化(0.0→0.02)。grpo9のドリフト劣化対策。k3推定・小さめ0.02で
+  # base分布からの逸脱を抑えつつ改善を許す。skip_reference_policy_logprobs_calculation:false と対。
+  reference_policy_kl_penalty: 0.02
   reference_policy_kl_type: k3
   kl_input_clamp_value: 20.0
   kl_output_clamp_value: 10.0
@@ -233,7 +237,8 @@ policy:
   optimizer:
     name: torch.optim.AdamW
     kwargs:
-      lr: 3.0e-07
+      lr: 1.0e-6               # ループ9 round-2: 3e-7→1e-6。grpo9のtrain reward横ばい(更新過小)対策。
+                               # KLアンカー(0.02)有効化と対で、暴れずに reward方向へ動かす狙い
       weight_decay: 0.01
       betas:
       - 0.9

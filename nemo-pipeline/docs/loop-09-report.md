@@ -84,6 +84,129 @@ MLFLOW_URI=http://$MLF_IP:5000 make grpo GRPO_CFG=grpo_finqa.yaml
   EDINET-Bench数値からの教師生成を追加（s2_finqa.py拡張・未実装の予備カード）
 - GRPO step時間 ~4分は推定（ループ8観測ベース）。max_new_tokens 400・seq 2048 は同一
 
-## コスト（本セッション時点）
+## コスト（計画時点）
 
 実装のみでAPI/GPU支出なし。想定総額 ~$100-170（上記見積り）。
+※実機実行の実績は末尾「コスト実績」を参照（超過）。
+
+---
+
+# 実機実行結果と検証ノウハウ（2026-07-27・round-1/round-2）
+
+> このセクションが本ループの中核成果。「何を試し、何がダメで、なぜか、次どうするか」を
+> 再利用可能な形で残す。数値は全て実機実測。
+
+## 1. データ工程（完走・実測）
+
+| 段 | 件数 | 備考 |
+|---|---|---|
+| fetch | 30,000 | ronantakizawa/Finance-Instruct-500k-Japanese（列名 user/assistant） |
+| ヒューリスティック通過 | 23,177 | 棄却: q_len 3,205 / not_japanese 1,675 / dup 1,662 / a_len 281 |
+| Haiku judge 採用 | 12,747（55%） | ~$8 |
+| 数値答え候補 | 5,364（42%） | parse_valued_number（単位/倍率付きのみ） |
+| Sonnet verify 検証済 | 2,800 | ~$50 |
+| 分割（round-2再配分） | sft_train 9,758 / sft_valid 199 / grpo 2,000 / heldout 300 / fmt 490 | 4者リーク検査パス |
+
+逐次ログ（judge_log/verify_log）のおかげでクレジット切れ・API上限でも**再課金ゼロで再開**できた。
+
+## 2. base 測定（GRPOの前提確認）
+
+- base9（round-1 heldout）: finqa_score **0.7823** / exact 0.6867 / number_found 1.0 / format 0.92
+- base9b（round-2 heldout）: finqa_score **0.7885** / exact 0.71 / number_found 1.0 / format 0.9133
+- → **base が既に「時々正解」帯域（exact 0.69-0.71）**。GRPOのグループ内分散が期待できる好条件。
+  well-tuned な指示追従モデルは FINQA_SYS の「答え:」形式を最初から守れる。
+
+## 3. round-1: SFT の破綻 → データ品質の教訓（最重要）
+
+- sft9（632step・lr5e-5・2ep・単一プロンプト FINQA_CHAT_SYS）: finqa 0.7823→**0.163**、
+  既存 analysis_match 0.836→**0.115** の全面崩壊。predは多言語トークンサラダ。
+- sft9b（fmt490混合・enable_thinking:false明示・lr1e-5・1ep・checkpoint退避で新規学習）:
+  finqa_score **0.29**・format **0.077**。predは**英語CoT("Okay, let's see...")が400トークンで
+  切れ「答え:」に未到達**。
+
+**根本原因**: Finance-Instruct-500k-Japanese の回答は**冗長な解説エッセイ**（概念を延々説明＋
+「お役に立てれば幸いです！他に質問があればお知らせください。」等のチャット挨拶）で、
+簡潔な検証可能回答ではない。これでSFTすると「冗長に説明する」挙動を学習し、簡潔な
+numeric-extraction 評価（FINQA_SYS＋答え行＋400トークン）と本質的にミスマッチして悪化する。
+
+### 教訓: SFT / GRPO の使い分けは「タスク × データ」で決まる
+
+| | 使う場面 | 失敗条件 |
+|---|---|---|
+| SFT（追加学習） | base が**できない**振る舞いを、**その形式のデモ**で教える | データ形式が目標とズレると逆方向へ動かす（＝finqa今回） |
+| GRPO（強化学習） | 出力を**プログラム採点**でき、base が**「時々正解」帯域** | 全問同値で報酬分散なし（＝ループ8）／KL無しでドリフト（＝grpo9） |
+
+**本プロジェクト内の対比が実証**:
+- **analysis（ループ1-7）**: base が構造化JSONラベルを苦手 → 形式一致デモでSFTが改善
+- **finqa（今回）**: base が既に簡潔正答 → 形式不一致の冗長デモでSFTが悪化
+
+→ 汎用QAデータの「品質」は日本語の自然さだけでなく**目標出力形式との一致**が本質。
+冗長な解説データは検証可能タスクのSFTには不適。**baseが既に強いタスクはSFTを飛ばしてGRPO直行が筋**。
+
+## 4. round-2: base→GRPO（SFT段を外す）
+
+方針転換: base が強く報酬が検証可能なので、SFTを飛ばし base から直接GRPO
+（grpo_finqa.yaml `model_name`→base、grpo 2,000件はSFTと排他の多様な検証可能プロンプト）。
+
+- **帯域診断パス**: step Avg Reward 0.66-0.78（理想0.5-0.9）、baseline_reward の
+  pct_0/pct_1/pct_mixed 共存＝グループ内分散あり＝**ループ8に欠けていた学習信号を確認**
+- 完走（236step=2ep）: 断片化OOM も思考空振りも無し（PR#40の cpu_offload+expandable_segments、
+  enable_thinking:false が有効）
+- **grpo9 評価 = フラット（階段出ず）**: finqa_score **0.7601** / exact 0.6767 / format 0.90
+  vs base9b 0.7885 / 0.71 / 0.9133。差は n=300 の SE（±0.02-0.026）内＝**統計的に有意な変化なし**
+
+## 5. 深掘り分析（追加GPU課金なし）— GRPO診断の定石
+
+grpo9 の「フラット」が **config弱い / base天井 / drift** のどれかを、既存ファイルだけで切り分けた。
+
+1. **train reward 推移**（`grep "Avg Reward" grpo9.log`）: first30 **0.658** → last30 **0.675**
+   （+0.017≈ノイズ）＝GRPOは train でも reward を押し上げていない
+2. **item単位 fix/break 差分**（eval_*_details.jsonl を index結合して比較）:
+   - base誤答を **21問 fix**（＝**学習可能シグナル実在＝base天井ではない**）
+   - base正答を **31問 break**（drift）、score improved 28 < regressed 42
+   - **break > fix ＝ KL無しドリフト劣化の signature**
+
+**診断確定**: base天井ではない（21問直せる）。主因は**KL/参照ポリシー無効
+（ループ8の64GB RAM制約の名残）によるドリフト** — アンカー不在で fixable を直す一方
+base の正解から離れ、差し引きマイナス。lr 3e-7 も低すぎ（train reward 横ばい）。
+
+## 6. round-2 修正（KL有効化再GRPO・本レポートと同PR）
+
+- `skip_reference_policy_logprobs_calculation: false`（参照ポリシー≈18GB pinned CPU、
+  384GBホスト g6e.12xlarge なら余裕）
+- `loss_fn.reference_policy_kl_penalty: 0.0 → 0.02`（k3・base分布アンカー）
+- `optimizer lr: 3e-7 → 1e-6`（更新過小の解消。KLと対で暴れ抑制）
+- **コード変更不要**: `run_grpo_finance._maybe_disable_reference_model` は
+  「skip=true かつ KL=0」の時のみ init_reference_model=False を注入するため、
+  config を false+KL>0 にすれば参照ポリシーが自動で有効化される
+- 期待値は控えめ（train reward 横ばい＝上積みの天井が近い可能性）。伸びなければ天井確定として総括。
+
+## 7. 運用ノウハウ（ハマりどころ集・次ループへの申し送り）
+
+- **チェックポイント自動レジューム罠**: `checkpoint_dir`（/ckpt/sft・/ckpt/grpo）に前回の
+  `step_*` が残っていると、新規学習のつもりが**レジュームを試みて `gather_object` の
+  code-object pickle エラー**（`TypeError: cannot pickle code objects`）で死ぬ。
+  → 新規走行前に checkpoint_dir を退避（`mv checkpoints/sft checkpoints/sft-xxx`）。SFT/GRPO共通
+- **convert の base抽出バグ（PR #47修正）**: `convert_sft_to_hf.sh` の `grep -m1 model_name` は
+  GRPO設定の `policy.draft.model_name: null` を先に拾い base="null" → merge_lora が 401。
+  SFTは policy.model_name のみで顕在化せず。null/空を除外して修正
+- **API上限の回避（課金ゼロ再ビルド）**: verify need（grpo+heldout+fmt）を既存 verified 件数
+  以内に収めると verify_numeric は新規API呼び出しをスキップ（既ログ再利用のみ）。配分変更で $0 再ビルド可
+- **eval/serve エンドポイント**: `host.docker.internal` は 127.0.0.1 バインドに届かない。
+  llm-gen のブリッジIP（GEN_IP=`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' llm-gen`）
+  を `OPENAI_BASE_URL=http://$GEN_IP:8000/v1` に渡す。MLflowも同様に MLF_IP
+- **tmux必須・切断耐性**: 学習は tmux 内で。`docker run -d`（serve/llm-gen）はデタッチなので
+  SSM切断でも生存。学習は `2>&1 | tee /tmp/xxx.log` でログ保存し、切断後は grep で結果回収
+- **per-epoch の step表示リセット**: `Step N/118` は epoch毎にリセット（118→1）。
+  グローバルstep（checkpoint `step_236`）とは別物。切断復帰で「step番号が戻った＝再起動」と
+  誤認しないこと（container の Up時間・グローバルstep・checkpoint で判断）
+- **GRPO診断の3点セット**（②③はGPU課金なし）: ①帯域診断ゲート（step1-3 Avg Reward 0.5-0.9・分散あり）
+  ②train reward 推移（first vs last）③item単位 fix/break 差分。②③で
+  「config弱い / base天井 / drift」を切り分けられる
+
+## コスト実績（2026-07-27時点）
+
+累計 **~$200消費**（当初見積り $100-170 を超過）。内訳の主因: judge ~$8・verify ~$50、
+GPU複数ラウンド（ループ8のOOMデバッグ空振り＋ループ9の SFT 2回＋GRPO）。
+round-2 の KL再GRPO は追加 ~7-14h GPU 見込み。教師API課金は round-2 では発生しない
+（SFT/GRPO/eval は全てローカル score_finqa で動くため）。
