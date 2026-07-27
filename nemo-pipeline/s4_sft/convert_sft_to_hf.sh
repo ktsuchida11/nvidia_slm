@@ -10,8 +10,12 @@ STEP_DIR="${1:-$(ls -d "$CKPT_ROOT"/step_* 2>/dev/null | sort -V | tail -1)}"
 ADAPTER="$STEP_DIR/policy/weights/model"
 test -f "$ADAPTER/adapter_model.safetensors" || { echo "アダプタが見つからない: $ADAPTER"; exit 1; }
 
-# config.yaml から policy.model_name を取得（model_name キーは policy 配下にのみ出現）
-BASE=$(grep -m1 'model_name:' "$STEP_DIR/config.yaml" | sed -e 's/.*model_name:[[:space:]]*//' -e "s/['\"]//g")
+# config.yaml から policy.model_name を取得。
+# 注意: GRPO設定は policy.draft.model_name: null も持つため grep -m1 だと null を拾う(SFTは
+# policy.model_nameのみで問題なかったが、GRPOで実害。以後は null/空を除いた最初の実値を採る)。
+BASE=$(grep 'model_name:' "$STEP_DIR/config.yaml" \
+       | grep -viE 'model_name:[[:space:]]*(null|~|""|'"'"''"'"'|$)' \
+       | head -1 | sed -e 's/.*model_name:[[:space:]]*//' -e "s/['\"]//g")
 [ -n "$BASE" ] || { echo "config.yaml から model_name を取得できない"; exit 1; }
 OUT="$CKPT_ROOT/hf"
 echo "[convert] adapter: $ADAPTER / base: $BASE -> $OUT"
