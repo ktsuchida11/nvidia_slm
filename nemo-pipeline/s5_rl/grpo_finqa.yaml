@@ -12,7 +12,8 @@ grpo:
   num_generations_per_prompt: 8
   max_rollout_turns: 1
   max_num_epochs: 2
-  max_num_steps: 320   # 2,500プロンプト/16=157step/epoch×2。帯域診断時は 3 に下げて起動
+  max_num_steps: 320   # 2,000プロンプト/16≈125step/epoch×2=250step(320は上限で実効250)。
+                       # 帯域診断: 本走を起動しstep1〜3のAvg Rewardを監視、帯域外なら即killする運用
   normalize_rewards: true
   use_leave_one_out_baseline: true
   val_period: 20       # 320stepではvalオーバーヘッドを抑える(analysisの40step用10から変更)
@@ -82,7 +83,11 @@ checkpointing:
   save_consolidated: false
   save_optimizer: true
 policy:
-  model_name: /ckpt/sft/hf
+  # ループ9 round-2 決定: 汎用金融QA(Finance-Instruct)は冗長な解説文でSFTすると簡潔な
+  # 「答え:」形式を破壊し評価が悪化した(sft9b finqa 0.29)。base自体が既に簡潔指示追従で
+  # finqa 0.79(exact 0.71=GRPOの理想「時々正解」帯域)のため、SFT段を飛ばして base から直接GRPO。
+  # ★/ckpt/sft/hf(壊れたSFT)ではなく base HF を指すこと。
+  model_name: nvidia/NVIDIA-Nemotron-Nano-9B-v2-Japanese
   tokenizer:
     name: ${policy.model_name}
     # 思考モード抑止(必須)。null(=テンプレート既定の思考ON)だと生成が<think>で始まり
