@@ -32,7 +32,7 @@ MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 # データビューア用ポート（衝突時は hostpath.mk で上書き）
 VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch curate distill relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-test tracking tensorboard viewer clean
+.PHONY: setup extract caption fetch fetch-edinet-bench curate distill relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-test tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -69,6 +69,10 @@ caption:             ## 図/スキャンをフロンティアAPI(Claude vision)�
 	  "(pip -q install anthropic pypdf python-pptx 2>/dev/null || true) && \
 	   python /pipeline/s1_curation/caption_figures.py --in /docs_in --out /data/raw \
 	   --license $(or $(LICENSE),own) --model $(or $(MODEL),claude-sonnet-4-6) $(CAPTION_FLAGS)"
+
+fetch-edinet-bench:  ## loop10 P1 Tier1: EDINET-Bench全configの有報本文を平文化して/data/rawへ（doc_id一意化・横断dedup。LIMIT=Nで動作確認）
+	$(RUN) $(PY_IMG) bash -lc "(pip -q install datasets 2>/dev/null || true) && \
+	  python /pipeline/s1_curation/fetch_edinet_bench.py --out /data/raw $(if $(LIMIT),--limit $(LIMIT))"
 
 fetch:               ## 金融データセット取得（商用可のみ。repo/licenseはHFカードで確認。docs/03参照。LIMIT=Nで件数制限、FIELDS=CSVでQA構造保持）
 	$(RUN) $(PY_IMG) bash -lc "(pip -q install datasets huggingface_hub 2>/dev/null || true) && \
