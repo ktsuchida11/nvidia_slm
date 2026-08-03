@@ -36,6 +36,10 @@ loop9 の最終結論（docs/loop-09-report.md §8）:
 - 目標コーパス: **合計 1〜2億字（≈0.7〜1.5億トークン）**。Tier 1+3 のみでも配管検証と小規模DAPTは成立（その場合は効果控えめの想定で判定）
 - 除外継続: NC/ND データ（JaFIn 等）は S1 ライセンスゲートで遮断
 
+> **P1 実測更新（2026-07-29・PR #51）**: Tier 1 実測は **2,551 文書・9,072万字**（見込み 3〜6千万字を上回り）
+> → Tier 1 単独でほぼ目標到達。**Tier 2（EDINET API・要APIキー）は初回 DAPT の必須条件から外し、
+> ③knowledge-probe が有望だった場合のスケールアップ手段に降格**。Tier 3 も同様に任意。
+
 ## 4. パイプライン設計
 
 ### P1 収集（$0・Mac/DooD）
@@ -45,13 +49,19 @@ loop9 の最終結論（docs/loop-09-report.md §8）:
 
 ### P2 キュレーション＝Curator 未使用機能の消化（$0・CPU中心）
 
-`s1_curate.py --engine curator` を拡張（Python 版は fallback として維持）:
-
-1. **言語ID**: fastText lid による日本語判定（現行は文字種ヒューリスティック）
-2. **品質分類**: Curator の品質フィルタ/分類器でスコア付与 → meta.quality を置換・層別可能に
-3. **PII**: Curator PII モジュール（Presidio ベース）で検出・秘匿化 — 現行 regex 4パターンの上位互換。EDINET実データで誤マスク率を regex 版と比較（loop 既知の「数値セル連結の金額誤マスク」再発検査）
-4. **大規模 dedup**: exact + fuzzy(MinHash) を Curator に委譲。1億字規模で現行純Python fuzzy は非現実的
-5. 実装は vendor 版 Curator の実 API を正とする（APIドリフト時は現行どおり fallback）
+> **P2 実装更新（2026-07-29 実測）**: pip 版 Curator は **1.3.0 の新アーキテクチャ（Ray ベース Pipeline/Stage API）**で、
+> 設計時に想定した旧 API（`nemo_curator.modules` の ExactDuplicates/PiiModifier 等）は廃止されていた。
+> CPU（`nemo-curator[text-cpu]`・arm64）で使えるもの／使えないものを実測で切り分け、以下の構成に確定:
+>
+> | 機能 | 設計時想定 | 実装（確定） |
+> | --- | --- | --- |
+> | 言語ID | fastText lid | ✅ Curator `FastTextLangId`（lid.176.ftz 自動取得）— `curator_stage.py` |
+> | 品質フィルタ | Curator 品質分類器 | ✅ Curator heuristic（`RepeatedLinesByCharFilter` = 文字ベースで日本語適合）。**`NonAlphaNumericFilter` は英語専用（ソース明記）で日本語が74%非英数扱い→全滅、不採用**。記号過多検査は本段 quality() の Unicode 安全実装が担う。語ベース・torch 分類器も不採用 |
+> | PII | Curator PII (Presidio) | ❌ pip 非同梱（GLiNER チュートリアルは GPU 前提）→ **EDINET 実データ校正済みの既存 regex を維持**（公開開示文書で PII リスクは低い） |
+> | fuzzy dedup | Curator 委譲 | ❌ GPU 専用（`deduplication-cuda12` extra）→ **自前 minhash をユニバーサルハッシュ+numpy で 64 倍高速化**（Jaccard 推定量は同一・校正済み閾値有効のまま） |
+>
+> 実行系: `make curate-curator` = Curator 前段（/data/raw → 言語ID+品質 → /data/raw_curator）→ 既存 s1_curate 本段
+> （PII regex・ライセンスゲート・exact/fuzzy dedup・メタデータ → /data/curated）。Curator が import 不能な環境では exit 3 で明示区別。
 
 ### P3 DAPT 配管検証（GPU小・承認ゲートA）
 

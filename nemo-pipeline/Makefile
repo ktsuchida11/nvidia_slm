@@ -32,7 +32,7 @@ MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 # データビューア用ポート（衝突時は hostpath.mk で上書き）
 VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch fetch-edinet-bench curate distill relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-test tracking tensorboard viewer clean
+.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-test tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -80,6 +80,13 @@ fetch:               ## 金融データセット取得（商用可のみ。repo/
 
 curate:              ## S1 収集・管理（CPUで可。Curator委譲は --engine curator）
 	$(RUN) $(PY_IMG) python /pipeline/s1_curation/s1_curate.py --in /data/raw --out /data/curated
+
+# fasttext が C++ コンパイルを要するため gcc 入り bookworm を既定にする（slim 不可）
+CURATOR_PY_IMG ?= python:3.12-bookworm
+curate-curator:      ## loop10 P2: Curator前段(言語ID+品質)→本段curate を連続実行。初回は pip install で数分
+	$(RUN) $(CURATOR_PY_IMG) bash -lc "(pip -q install 'nemo-curator[text-cpu]' numpy 2>/dev/null || true) && \
+	  python /pipeline/s1_curation/curator_stage.py --in /data/raw --out /data/raw_curator && \
+	  python /pipeline/s1_curation/s1_curate.py --in /data/raw_curator --out /data/curated"
 
 distill:             ## S2 蒸留（要 ANTHROPIC_API_KEY。LiteLLM経由は ANTHROPIC_BASE_URL/TEACHER_MODEL を指定）
 	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
