@@ -32,7 +32,7 @@ MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 # データビューア用ポート（衝突時は hostpath.mk で上書き）
 VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-test tracking tensorboard viewer clean
+.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill dapt-prep relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-test tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -191,8 +191,12 @@ mlflow:              ## MLflowサーバ起動（:5000, データはresults/mlrun
 MLFLOW_URI ?= http://host.docker.internal:5000
 TRACK := -e MLFLOW_TRACKING_URI=$(MLFLOW_URI) --add-host=host.docker.internal:host-gateway
 
-dapt:                ## S3 継続事前学習（任意）
-	$(RUN) $(GPU) $(TRACK) --shm-size=16g $(NEMO_IMG) bash /pipeline/s3_pretraining/run_dapt.sh
+dapt:                ## S3 継続事前学習（loop10で実体化。DAPT_CFG=/pipeline/s3_pretraining/dapt.yaml、GPU数はDAPT_GPUS）
+	$(RUN) $(GPU) $(TRACK) --shm-size=16g -e DAPT_CFG -e DAPT_GPUS -e DAPT_REPREP -e DAPT_PIP_UPGRADE -e HF_TOKEN \
+	  -v $${HF_HOME:-$$HOME/.cache/huggingface}:/root/.cache/huggingface \
+	  $(NEMO_IMG) bash /pipeline/s3_pretraining/run_dapt.sh
+dapt-prep:           ## S3 コーパス準備のみ（CPU可・リーク検査+3分割。ローカルで事前確認用）
+	$(RUN) $(PY_IMG) python /pipeline/s3_pretraining/prep_corpus.py --in /data/curated/curated.jsonl --out /data/pretrain
 prep-rl:             ## S4/S5用データ変換（distilled → NeMo-RL ResponseDataset形式。CPUで可）
 	$(RUN) $(PY_IMG) python /pipeline/s5_rl/prep_rl_data.py --in /data/distilled --out /data/distilled/rl
 sft:                 ## S4 SFT/LoRA（NeMo-RL: examples/run_sft.py。設定差し替えは SFT_CFG=/pipeline/s4_sft/sft_finqa.yaml）
