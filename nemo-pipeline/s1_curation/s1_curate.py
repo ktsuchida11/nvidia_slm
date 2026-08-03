@@ -83,13 +83,33 @@ def classify_domain(text: str) -> str:
 def exact_key(text: str) -> str:
     return hashlib.sha1(re.sub(r"\s+", "", text).encode()).hexdigest()
 
+try:
+    import numpy as _np                      # あれば64permをベクトル化（9千万字規模で必須級）
+except ImportError:
+    _np = None
+
+# 決定的なユニバーサルハッシュ係数: sig[p] = min((a_p*h(g)+b_p) mod 2^64)
+# 旧実装(gramごとにNUM_PERM回blake2b)は計算量が64倍で、loop10の9千万字コーパスでは時間単位
+# かかるため置換。MinHashのJaccard推定量としての性質は同じ(FUZZY_THRESHOLDの校正は有効なまま)。
+_MASK = (1 << 64) - 1
+_PERMS = []
+for _p in range(NUM_PERM):
+    _h = hashlib.blake2b(f"perm:{_p}".encode(), digest_size=16).digest()
+    _PERMS.append((int.from_bytes(_h[:8], "big") | 1, int.from_bytes(_h[8:], "big")))
+if _np is not None:
+    _A = _np.array([a for a, _ in _PERMS], dtype=_np.uint64)
+    _B = _np.array([b for _, b in _PERMS], dtype=_np.uint64)
+
+
 def minhash(text: str) -> list[int]:
     grams = {text[i:i+NGRAM] for i in range(max(len(text) - NGRAM + 1, 1))}
-    sig = []
-    for p in range(NUM_PERM):
-        sig.append(min(int.from_bytes(hashlib.blake2b(f"{p}:{g}".encode(), digest_size=8).digest(), "big")
-                       for g in grams))
-    return sig
+    xs = [int.from_bytes(hashlib.blake2b(g.encode(), digest_size=8).digest(), "big")
+          for g in grams]
+    if _np is not None:
+        x = _np.array(xs, dtype=_np.uint64)
+        with _np.errstate(over="ignore"):    # uint64はmod 2^64で自然に折り返す
+            return (_A[:, None] * x[None, :] + _B[:, None]).min(axis=1).tolist()
+    return [min(((a * x + b) & _MASK) for x in xs) for a, b in _PERMS]
 
 def fuzzy_dedup(docs: list[dict]) -> tuple[list[dict], int]:
     """品質降順で走査し、既採用とJaccard推定>=閾値なら落とす。LSHバンドで候補を絞る。"""
