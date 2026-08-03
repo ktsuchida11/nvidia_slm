@@ -31,6 +31,13 @@ aws s3 sync "$PIPELINE_DIR/data/distilled/" "s3://$CKPT_BUCKET/data/distilled/" 
   --profile "$PROFILE" --delete
 echo "OK: data/distilled/ -> s3://$CKPT_BUCKET/data/distilled/"
 
+# --- DAPTコーパス: data/pretrain/（loop10。存在する場合のみ） ---
+if [ -d "$PIPELINE_DIR/data/pretrain" ]; then
+  aws s3 sync "$PIPELINE_DIR/data/pretrain/" "s3://$CKPT_BUCKET/data/pretrain/" \
+    --profile "$PROFILE" --delete
+  echo "OK: data/pretrain/ -> s3://$CKPT_BUCKET/data/pretrain/"
+fi
+
 # --- リポジトリ本体（オプション。GPU側で git clone できない場合の代替） ---
 if [ "${1:-}" = "--with-repo" ]; then
   aws s3 sync "$REPO_ROOT/" "s3://$CKPT_BUCKET/repo/" \
