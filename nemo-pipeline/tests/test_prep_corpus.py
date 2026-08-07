@@ -55,14 +55,18 @@ def test_heldout_missing_files_is_empty_not_error():
     assert shingles == set() and files == []
 
 
-def test_split_deterministic_and_disjoint():
+def test_split_deterministic_val_disjoint_probe_within_train():
     docs = _docs(20)
     t1, v1, p1 = split_docs(docs, n_probe=5, n_val=3)
     t2, v2, p2 = split_docs(list(reversed(docs)), n_probe=5, n_val=3)  # 入力順に依存しない
     assert (t1, v1, p1) == (t2, v2, p2)
-    keys = [k for part in (t1, v1, p1) for k, _ in part]
-    assert len(keys) == len(set(keys)) == 20
-    assert len(p1) == 5 and len(v1) == 3 and len(t1) == 12
+    train_keys = {k for k, _ in t1}
+    val_keys = {k for k, _ in v1}
+    probe_keys = {k for k, _ in p1}
+    assert not (train_keys & val_keys), "valは学習外"
+    assert probe_keys <= train_keys, "probeは学習内の追跡サブセット（注入知識を測るため）"
+    assert len(v1) == 3 and len(p1) == 5 and len(t1) == 17
+    assert train_keys | val_keys == {k for k, _ in docs}
 
 
 if __name__ == "__main__":

@@ -81,10 +81,15 @@ def find_leaks(docs: list[tuple[str, str]], shingles: set[str]) -> set[str]:
 
 
 def split_docs(docs: list[tuple[str, str]], n_probe: int, n_val: int):
-    """sha1(source)順の決定的分割。probe→val→trainの優先で割当"""
+    """sha1(source)順の決定的分割。
+    val   = 学習外（held-out loss 用）。
+    probe = **学習内**の追跡サブセット（P5 で QA 化し「注入された知識」を測る。
+            学習から除外すると未見文書への汎化テストになり注入効果を測れない）。
+    train = val 以外の全文書（probe を含む）。"""
     ordered = sorted(docs, key=lambda kt: hashlib.sha1(kt[0].encode()).hexdigest())
-    probe, val, train = ordered[:n_probe], ordered[n_probe:n_probe + n_val], ordered[n_probe + n_val:]
-    return train, val, probe
+    val, rest = ordered[:n_val], ordered[n_val:]
+    probe = rest[:n_probe]
+    return rest, val, probe
 
 
 def write(docs: list[tuple[str, str]], path: pathlib.Path) -> int:
@@ -115,9 +120,9 @@ def main(in_path: str, out_dir: str, min_chars: int, heldout_pats: list[str],
     c_probe = write(probe, dst / "corpus_probe.jsonl")
 
     print(f"leak-check: heldout {len(files)}ファイル・シングル{len(shingles):,} → 除外 {len(leaked)} 文書")
-    print(f"corpus_train: {len(train):,} docs / {c_train:,} 字")
+    print(f"corpus_train: {len(train):,} docs / {c_train:,} 字（probeを含む）")
     print(f"corpus_val  : {len(val):,} docs / {c_val:,} 字（held-out loss用・学習不使用）")
-    print(f"corpus_probe: {len(probe):,} docs / {c_probe:,} 字（knowledge-probe種文書・学習不使用）")
+    print(f"corpus_probe: {len(probe):,} docs / {c_probe:,} 字（knowledge-probe種文書・**学習内**の追跡コピー）")
     print(f"除外: 未処理マーカー{stats['markers']} / 短文書{stats['short_docs']} / リーク{len(leaked)}")
     if c_train < 10_000_000:
         print("⚠ train が1千万字未満 — DAPT の効果が出にくい規模。収集の拡充を検討")
