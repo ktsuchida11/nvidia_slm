@@ -88,7 +88,12 @@ def main() -> None:
 
     peft = None
     if t.get("peft") == "lora":
-        peft = llm.peft.LoRA(dim=int(t.get("lora_r", 64)),
+        # target_modules は HF モジュール名パターンで明示必須（実機で確定）:
+        # NeMo LoRA の既定は Megatron 層名で HF 形式の NemotronH に1つもマッチせず
+        # 「学習可能パラメータゼロ」で optimizer 構築が落ちる。'*_proj' は
+        # attention(q/k/v/o_proj)・Mamba2(in/out_proj)・MLP(up/down_proj) を網羅する。
+        peft = llm.peft.LoRA(target_modules=["*_proj"],
+                             dim=int(t.get("lora_r", 64)),
                              alpha=int(t.get("lora_alpha", 2 * int(t.get("lora_r", 64)))))
 
     dataset, eos = build_lm_dataset(d["train"], d["val"], model.tokenizer, int(t["seq_len"]))
