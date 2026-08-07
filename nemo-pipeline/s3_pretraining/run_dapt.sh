@@ -15,6 +15,11 @@ echo "[S3-2/3] 学習実行（NeMo 2.3 AutoModel + FSDP2）"
 if [ "${DAPT_PIP_UPGRADE:-0}" = "1" ]; then
   pip install -q -U "transformers>=4.53" datasets
 fi
+# nemo:25.04 に mlflow は非同梱（実機確認）。MLflow 追跡を使う場合のみ軽量版を入れる
+if [ -n "${MLFLOW_TRACKING_URI:-}" ]; then
+  python3 -c "import mlflow" 2>/dev/null || pip install -q mlflow-skinny || \
+    echo "⚠ mlflow インストール失敗 — 追跡なしで続行（dapt_train.py 側でスキップ）"
+fi
 python3 - <<'EOF'
 from transformers import AutoConfig
 import transformers
