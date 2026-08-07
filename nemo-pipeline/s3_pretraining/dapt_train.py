@@ -101,9 +101,13 @@ def main() -> None:
 
     loggers = []
     if os.environ.get("MLFLOW_TRACKING_URI"):
-        from lightning.pytorch.loggers import MLFlowLogger
-        loggers.append(MLFlowLogger(experiment_name="dapt",
-                                    tracking_uri=os.environ["MLFLOW_TRACKING_URI"]))
+        try:
+            from lightning.pytorch.loggers import MLFlowLogger
+            loggers.append(MLFlowLogger(experiment_name="dapt",
+                                        tracking_uri=os.environ["MLFLOW_TRACKING_URI"]))
+        except (ImportError, ModuleNotFoundError) as e:
+            # nemo:25.04 は mlflow 非同梱。追跡は落として学習は続行（lossはstdout+ckptログに残る）
+            print(f"⚠ MLflow logger 無効（{e}）— 追跡なしで続行")
 
     max_steps = int(t["max_steps"])
     log = nl.NeMoLogger(
