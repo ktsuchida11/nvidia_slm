@@ -20,9 +20,12 @@ train:
   accumulate_grad_batches: 8       # 実効バッチ = dp4 × mbs1 × accum8 = 32seq ≈ 13万トークン/step
   lr: 1.0e-5                       # 継続事前学習の常用帯。忘却が出たら5e-6へ
   grad_clip: 1.0
-  max_steps: 60                    # ★P3配管検証値（〜800万トークン）。P4本走は要再計算+承認
-  val_check_interval: 30
+  # ★P4本走値（ゲートB承認済み: full-param 1epoch）。1ep = train 81.5M字 ≈ 70Mトークン
+  #   ≈ 4,255マイクロバッチ ≈ 530 optimizer step（実効バッチ32seq・実測1,076tps → ~18h）
+  max_steps: 530
+  val_check_interval: 800          # マイクロバッチ単位（PL仕様）≈ 5回/epoch の held-out loss 測定
   limit_val_batches: 50
+  save_every: 100                  # optimizer step単位。top_k1+lastでディスク~72GBに抑制
   log_every: 1
 
 data:

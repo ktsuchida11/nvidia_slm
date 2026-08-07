@@ -63,12 +63,19 @@ def main() -> None:
     from nemo.collections import llm
     from nemo.collections.llm.recipes.optim.adam import pytorch_adam_with_cosine_annealing
 
+    enable_grad_ckpt = bool(m.get("enable_grad_ckpt", True))
+    if t.get("peft") == "lora" and enable_grad_ckpt:
+        # 実機で確定: NeMo automodel の LoRA は HF PEFT と違い enable_input_require_grads を
+        # 呼ばないため、grad ckpt 併用だと先頭checkpoint区間で勾配パスが切れ
+        # "element 0 of tensors does not require grad" で backward が落ちる。LoRA時は無効化。
+        print("⚠ LoRA + gradient checkpointing は非互換（NeMo automodel経路）— grad ckpt を無効化")
+        enable_grad_ckpt = False
     model = llm.HFAutoModelForCausalLM(
         model_name=m["name"],
         attn_implementation=m.get("attn_implementation", "sdpa"),
         loss_fn=masked_cross_entropy,
         trust_remote_code=bool(m.get("trust_remote_code", True)),
-        enable_grad_ckpt=bool(m.get("enable_grad_ckpt", True)),
+        enable_grad_ckpt=enable_grad_ckpt,
     )
 
     devices = int(t.get("devices", 4))
@@ -88,7 +95,12 @@ def main() -> None:
 
     peft = None
     if t.get("peft") == "lora":
-        peft = llm.peft.LoRA(dim=int(t.get("lora_r", 64)),
+        # target_modules は HF モジュール名パターンで明示必須（実機で確定）:
+        # NeMo LoRA の既定は Megatron 層名で HF 形式の NemotronH に1つもマッチせず
+        # 「学習可能パラメータゼロ」で optimizer 構築が落ちる。'*_proj' は
+        # attention(q/k/v/o_proj)・Mamba2(in/out_proj)・MLP(up/down_proj) を網羅する。
+        peft = llm.peft.LoRA(target_modules=["*_proj"],
+                             dim=int(t.get("lora_r", 64)),
                              alpha=int(t.get("lora_alpha", 2 * int(t.get("lora_r", 64)))))
 
     dataset, eos = build_lm_dataset(d["train"], d["val"], model.tokenizer, int(t["seq_len"]))
