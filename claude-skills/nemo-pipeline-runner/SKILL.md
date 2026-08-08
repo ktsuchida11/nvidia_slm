@@ -1,103 +1,86 @@
 ---
 name: nemo-pipeline-runner
 description: >
-  NVIDIA NeMoパイプライン（local-llm-workshop/nemo-pipeline）の一連の流れを
-  Claude Codeで自動運転・評価ループさせるスキル。環境確認→データ準備(extract/caption/fetch)→
-  S1 curate→S2 distill→(S3 DAPT)→S4 SFT→S5 GRPO→S6 eval→S7 guardrails を Makefile 経由で実行し、
-  S6の合否(exit code)に基づいて前段へ戻る改善ループを回す。
-  「NeMoパイプラインを一周して」「評価ループを回して」「パイプライン実行」「SFTまで進めて」
-  「base測定して」「ガードレール検証して」「make evalの結果を見て次を判断して」などで発動。
+  NVIDIA NeMoパイプライン（nemo-pipeline/）をClaude Codeで自動運転・評価ループさせるスキル。
+  loop1〜10の実測知見（手法選択・評価3層・課金ゲート・実機罠・リモートGPU運用）を運用知として内蔵。
+  データ準備→S1 curate→(S2 distill)→(S3 DAPT)→S4 SFT→S5 GRPO→S6 eval を Makefile 経由で実行し、
+  S6の合否と診断定石に基づいて次の一手を判断する。
+  「NeMoパイプラインを回して」「評価ループ」「次のループを設計して」「base測定して」
+  「SFT/GRPO/DAPTどれを使うべきか」「ノードで学習して」などで発動。
   コスト・GPU・外部APIを伴う操作は必ず人間の承認を得てから実行する。
 ---
 
 # NeMo Pipeline Runner — 自動運転と評価ループ
 
 ## 前提
-- 作業ディレクトリ: `nemo-pipeline/`（`Makefile` があること）。無ければ探索して `cd`。
-- 実行は**必ず `make` ターゲット経由**（直接dockerコマンドを組み立てない）。
-- 参照: docs/10-runbook.md（手順の正）, docs/02-makefile-coverage.md（makeの守備範囲）, s6_evaluation/eval.yaml（閾値）。
 
-## 承認ゲート（must）— 以下は実行前に必ずユーザーへ確認
+- 作業ディレクトリ: `nemo-pipeline/`（`Makefile` があること）。実行は**必ず `make` ターゲット経由**。
+- **学習・配信はリモートGPUノード**（AWS spot g6e系・L40S）で行う。ローカル（DevContainer/Mac）は
+  実装・テスト・$0配管検証まで。ノードとの同期・起動停止は [references/operations.md](references/operations.md)。
+- 参照の正: docs/10-runbook.md（基本手順）、docs/loop-XX-report.md（各ループの実測結論）、
+  s6_evaluation/（評価定義）。本スキルの references/ は loop1-10 の蒸留版で、矛盾したら loop report が正。
+
+## ループの型（1周 = 以下を順に）
+
+1. **計画**: 前ループ総括の「次への示唆」から1テーマを選び、docs/loop-XX-plan.md に設計
+   （仮説・変更点・評価軸・概算コスト・承認ゲート）を書いて PR → ユーザー承認
+2. **手法選択**: SFT / GRPO / DAPT の適用可否を [references/decision-table.md](references/decision-table.md) の
+   意思決定表で判断（loop8/9/10 の失敗はすべて「手法とタスク×データ×base強度の不一致」が原因）
+3. **実装**: ローカルで $0 実装 + ユニットテスト + dry 配管（デバッグをGPU時間から切り離す）
+4. **配管検証（小）→ 本走**: 課金は [references/billing-gates.md](references/billing-gates.md) のゲート運用
+   （概算→小規模実測→再見積り→承認）に従う
+5. **評価**: [references/evaluation.md](references/evaluation.md) の評価3層＋リーク検査＋統計的判定
+6. **総括**: docs/loop-XX-report.md に「何を試し・何がダメで・なぜか・次どうするか」を実測値で記録。
+   罠を踏んだら [references/traps.md](references/traps.md) 形式でカタログ化
+
+## 承認ゲート（must）— 実行前に必ずユーザーへ確認
+
 | 操作 | 理由 |
 |---|---|
-| `make distill`（dry以外） | Anthropic API課金（概算コストを先に提示） |
-| `make caption`（dry以外） | 画像を外部APIへ送信（**機微画像は送らない**: docs/05決定表）＋課金 |
-| `make dapt` / `make sft` / `make grpo` | GPU長時間占有（推論ホスト兼用なら推論停止を伴う） |
-| `make serve-nemotron` 初回 | ~18GBのモデルDL（HF gated同意が前提） |
-| Docker network / .env の変更 | 環境破壊防止 |
+| GPUノードの起動・学習ジョブ（`make dapt` / `make sft` / `make grpo`） | スポット課金（概算を先に提示） |
+| `make distill` / `make probe-gen` / judge・verify 等の教師API | API課金＋外部送信 |
+| `make caption`（dry以外） | 画像を外部APIへ送信（機微画像は送らない） |
+| 本走の続行判断（配管検証の実測後） | 実測レートで再見積りしてから |
+| チェックポイント・データの削除 | S3バックアップ確認後のみ |
 
-## フェーズ0: 環境チェック（毎回最初に）
-```bash
-make -n setup >/dev/null && echo OK   # Makefile健全性
-docker info >/dev/null 2>&1 || echo "Docker未起動"
-nvidia-smi >/dev/null 2>&1 && echo "GPUあり" || echo "GPUなし(学習系はスキップ)"
-test -n "$ANTHROPIC_API_KEY" && echo "APIキーあり" || echo "APIキーなし(distill/captionはdryのみ)"
-make setup
+## フェーズフロー
+
 ```
-GPU/キーの有無で到達可能フェーズを宣言してから進む（無いものは飛ばす。エラーで止まらない）。
-
-## フェーズ1: 配管検証（無料・数分・常に実行）
-```bash
-make curate distill-dry eval-dry
+フェーズ0 環境チェック: make -n setup / docker info / ノード稼働状態（不要なら止まっているか）
+フェーズ1 $0配管検証:   make curate distill-dry eval-dry（+ 各ループの *-dry）→ pass確認
+フェーズ2 データ準備:    make fetch / fetch-edinet-bench / curate-curator（Curator前段）
+                        → リーク検査（evaluation.md §リーク検査）を通ってから学習データ化
+フェーズ3 base測定:     serve → make eval TAG=base*（合否の物差し。exit 2 は想定内）
+フェーズ4 学習:         decision-table.md で手法を選び、billing-gates.md のゲートを経て実行
+フェーズ5 評価・診断:    evaluation.md の3層判定 + 診断定石（GPU追加課金なしの深掘りを先に）
+フェーズ6 総括レポート:  loop-XX-report.md + メモリ/スキル更新
 ```
-- eval-dry の `"pass": true` を確認。falseなら**ここで停止して原因調査**（配管が壊れている）。
 
-## フェーズ2: データ準備（必要時）
-- 文書がある: `make extract IN=<dir>` → 図/スキャンが `needs_extraction` に隔離されたら
-  （承認の上）`make caption IN=<dir>` か NeMo Retriever を提案。
-- HFデータ: `make fetch REPO=<id> LICENSE=<カード記載>`（**商用可のみ**。NC/NDは弾かれるのが正常）。
-- `data/curated/stats.json` の kept / rejected 内訳を要約して報告。
+## 判断の要点（詳細は references/）
 
-## フェーズ3: 蒸留 → base測定
-```bash
-# 承認後、まず小さく
-make distill N_ANALYSIS=100 N_GEN=30
-make serve-nemotron   # (GPUあり時)
-OPENAI_BASE_URL=http://localhost:8002/v1 make eval TAG=base
-```
-- base の exit 2（閾値未達）は**想定内**。results/eval_base.json を「超えるべき線」として記録。
+- **手法選択を間違えると逆効果**: baseが既に強いタスクへのSFTは悪化させ（loop9 round-1）、
+  暗記済みデータのGRPOは学習信号ゼロ（loop8）、1epochの生テキストDAPTは指標に効かない（loop10）。
+  必ず decision-table.md を先に引く
+- **評価は3層で分離**: held-out loss（分布適応）と probe（知識取り出し）と非退行（忘却）は
+  それぞれ別の答えを返す（loop10で実証）。1つの指標で合否を語らない
+- **リーク検査なしの評価は無効**: loop10 では検査が223文書の実リークを検出した。検査なしなら評価汚染だった
+- **差の解釈は SE と比較**: n=300 で SE±0.02。差がSE内なら「同等」であり改善でも退行でもない
+- **フラットな結果はまず $0 で診断**: train reward 推移と item単位 fix/break 差分で
+  「config弱い / base天井 / drift」を切り分けてから追加課金を提案する
 
-## フェーズ4: 学習ループ（評価駆動・最大3周）
-```
-loop:
-  (承認) make sft → make eval TAG=sft
-  改善判定: results/eval_{base,sft}.json を比較
-  ├─ 全閾値クリア(exit 0) → GRPOへ or 完了
-  ├─ 改善したが未達 → 下の分岐表で1手だけ変えて再学習（同時に2つ変えない）
-  └─ 改善なし(2回連続) → 停止してレポート（人間の判断を仰ぐ）
-  (承認) make grpo → make eval TAG=grpo → 同様に判定
-```
-**分岐表（未達メトリクス → 次の一手）**
-| メトリクス | 疑う場所 | 次の一手 |
-|---|---|---|
-| schema_valid 低 | 出力形式の学習不足 | analysisデータ増量 / プロンプト整合(common/prompts) |
-| analysis_match 低 | カテゴリ偏り・ラベル品質 | S2の層別バランス見直し・N_ANALYSIS増 |
-| source_exists 低 | 忠実性 | S5報酬の重み / S2忠実性ゲート閾値 / 生成データ増 |
-| citation_format 低 | 形式報酬 | penalty調整・few-shot追加 |
-| 学習が発散/OOM | リソース | docs/06の絞りノブを上から順に1つずつ |
+## NeMoコンポーネント消化状況（2026-08 時点）
 
-**ループ規則（must）**: held-outを学習に使わない／1周で変えるのは1要素／各周の判断を loop_report に記録。
-
-## フェーズ5: ガードレール検証
-```bash
-make guardrails && make guardrails-test
-```
-- results/garak* の promptinject 成功率を before/after で報告（TS-07/08）。
-
-## フェーズ6: レポート（毎回最後に）
-`results/loop_report.md` に追記:
-- 実行したターゲットと結果（eval_*.json の表・MLflow http://localhost:5000 の run 名）
-- 各判断の理由（分岐表のどれを引いたか）／次アクション提案／かかった概算コスト
-
-## 失敗時の定型対処
-| 症状 | 対処 |
+| コンポーネント | 状態 |
 |---|---|
-| nvcr.io pull 401 | `docker login nvcr.io`（user=`$oauthtoken`, pass=NGC APIキー） |
-| vLLM起動失敗(Nemotron) | イメージ版をモデルカード記載版へピン（docs/06） |
-| OOM | docs/06 絞りノブ①→⑤を1つずつ。`PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64` |
-| eval接続失敗 | `OPENAI_BASE_URL` とサーバ起動(healthcheck)を確認 |
-| distillでrejects多発 | data/distilled/stats.json の理由別内訳→スキーマ/忠実性のどちらかを特定 |
+| Curator（言語ID/品質/dedup） | 済（CPU版。PII/GPU dedup はGPU専用と確定） |
+| NeMo Framework DAPT（AutoModel経路） | 済（loop10。Mamba+Attentionハイブリッドは Megatron変換不可） |
+| NeMo-RL SFT / GRPO | 済（loop1-9） |
+| S7 Guardrails（NeMo Guardrails/garak） | **未実機検証**（実装はあり: make guardrails） |
+| NeMo Retriever（RAG） | **未消化**。DAPT知識注入との費用対効果比較（loop10の示唆）の題材に好適 |
 
 ## やらないこと（must not）
-- heldout.jsonl を学習・報酬・プロンプト例に使う／閾値(eval.yaml)を勝手に下げて"合格"させる
-- 承認なしの課金・GPU長時間ジョブ・機微画像のAPI送信／`.env`・秘密情報の表示や書き換え
+
+- heldout を学習・報酬・プロンプト例・dedup以外の用途に使う／閾値を下げて「合格」させる
+- 承認なしの課金・GPU長時間ジョブ・機微データの外部送信／`.env`・秘密情報の表示や書き換え
+- 配管検証（dry・小規模）を飛ばした本走／リーク検査を飛ばした学習データ投入
+- マージ依頼を全コミットpush前に出す（スタックPR罠: operations.md §PR規律）
