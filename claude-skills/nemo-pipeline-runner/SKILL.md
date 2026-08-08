@@ -76,7 +76,7 @@ description: >
 | NeMo Framework DAPT（AutoModel経路） | 済（loop10。Mamba+Attentionハイブリッドは Megatron変換不可） |
 | NeMo-RL SFT / GRPO | 済（loop1-9） |
 | S7 Guardrails（NeMo Guardrails/garak） | **未実機検証**（実装はあり: make guardrails） |
-| NeMo Retriever（RAG） | **未消化**。DAPT知識注入との費用対効果比較（loop10の示唆）の題材に好適 |
+| NeMo Retriever embedding NIM（RAG） | 済（loop12。llama-3.2-nv-embedqa-1b-v2 TRT FP8/L40S・dim2048。probe 0.0402→0.4724 で DAPT知識注入をクローズ）。**rerank NIM は未消化** |
 
 ## やらないこと（must not）
 

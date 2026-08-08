@@ -34,6 +34,15 @@
 | eval がサーバに届かない | `host.docker.internal` は 127.0.0.1 バインドに届かない | `docker inspect` でブリッジIPを取り `OPENAI_BASE_URL=http://$IP:8000/v1` |
 | 思考モードが出力を食い潰す（400tokで答え未到達） | `/no_think` は無効 | vLLM の `chat_template_kwargs {"enable_thinking": false}` のみ有効。**学習と評価で設定を揃える**（非対称はloop8の敗因の一つ） |
 
+## NIM（embedding NIM 初導入 — loop12）
+
+| 症状 | 原因 | 対処 |
+|---|---|---|
+| nvcr.io から NIM イメージ pull が「Access Denied」 | NIM リポジトリは NGC API キーでの docker login 必須（旧ログインキャッシュ無効） | `echo "$NGC_API_KEY" \| docker login nvcr.io -u '$oauthtoken' --password-stdin`（ユーザー名は文字列 `$oauthtoken` そのもの） |
+| NIM が起動直後に死ぬ: manifest「Permission denied (os error 13)」 | `~/.cache/nim` を docker が root 所有で自動作成 ↔ NIM は非root(uid 1000) | `sudo chown -R 1000:1000 ~/.cache/nim`。`--rm` だとログごと消える→フォアグラウンド再現が早い |
+| NIM 稼働中に vLLM が「Free memory < utilization 0.92」で**全GPU**起動不能 | `--gpus all` の NIM は Triton CUDA pool を全GPUに ~4GB ずつ確保 | 同居時は**両サービスとも** `make serve-* GPU='--gpus device=N'` で別GPUにピン留め |
+| tmux 内で埋め込みAPIに「Name or service not known」 | `tmux new` は新シェル → 外で取った `EMB_IP` が空になり URL のホスト名が消える | ブリッジIP取得は tmux セッション内でやり直す |
+
 ## NeMo Curator 1.3.0 pip（loop10）
 
 | 症状 | 原因 | 対処 |
