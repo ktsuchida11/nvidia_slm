@@ -8,6 +8,11 @@ base は未見・dapt10 は学習済みなので、差分 = 重みに注入さ�
   生成(要 ANTHROPIC_API_KEY・~$3-8):  make probe-gen         (Mac から。LiteLLM経由可)
   評価(ノード・配信中のモデルに対して): make probe-eval TAG=dapt10
                                        make probe-eval TAG=base10
+
+loop12 拡張(--rag): s8_retrieval のインデックスで検索した上位チャンクをプロンプトに
+前置して open-book 評価する。closed-book(base=dapt10=0.0402)との差 = RAG の階段。
+  RAG評価(ノード):   make rag-eval TAG=rag199
+  配管検証(ローカル): make rag-eval-dry  (検索は実行・生成はgoldモック=正答率1.0が正常)
 採点は完全ローカル(数値=相対誤差1%・文字列=正規化包含)。API不要。
 """
 from __future__ import annotations
@@ -40,6 +45,16 @@ GEN_USER = """会社名: {company}
 この文書に固有の事実質問を{n}問、JSON配列で出力してください。"""
 
 EVAL_SYS = "日本語で簡潔に答えてください。答えの事実のみを短く出力し、説明は不要です。"
+
+RAG_SYS = ("日本語で簡潔に答えてください。提示された参考資料から質問の答えとなる事実を"
+           "探して答えてください。答えの事実のみを短く出力し、説明は不要です。")
+
+
+def build_rag_user(q: str, hits: list[dict]) -> str:
+    """検索チャンクを前置した open-book プロンプト（loop12）。"""
+    ctx = "\n\n".join(f"【参考資料{i + 1}｜{h['source']}】\n{h['text']}"
+                      for i, h in enumerate(hits))
+    return f"{ctx}\n\n質問: {q}"
 
 
 # ---- 採点（完全ローカル・純関数） --------------------------------------------
@@ -105,31 +120,62 @@ def run_generate(probe_path: str, out_path: str, n_per_doc: int, max_chars: int,
     log.info("done: %s", out_p)
 
 
-# ---- 評価（配信モデルへclosed-bookで出題・ローカル採点） ----------------------
+# ---- 評価（配信モデルへ出題・ローカル採点。--rag で open-book） ---------------
 def run_eval(qa_path: str, tag: str, out_dir: str, base_url: str, chat_kwargs: dict,
-             max_tokens: int) -> None:
-    from openai import OpenAI
-    client = OpenAI(base_url=base_url, api_key=os.environ.get("OPENAI_API_KEY", "dummy"))
-    model = client.models.list().data[0].id
-    log.info("eval対象: %s (%s)", model, base_url)
+             max_tokens: int, rag_index: str = "", rag_k: int = 5,
+             dry_run: bool = False) -> None:
+    client = model = None
+    if not dry_run:
+        from openai import OpenAI
+        client = OpenAI(base_url=base_url, api_key=os.environ.get("OPENAI_API_KEY", "dummy"))
+        model = client.models.list().data[0].id
+        log.info("eval対象: %s (%s)", model, base_url)
     rows = [json.loads(l) for l in pathlib.Path(qa_path).open(encoding="utf-8") if l.strip()]
-    n_ok = 0
+
+    hits_all = None
+    if rag_index:                             # loop12: 検索を先に一括実行（埋め込みもバッチ）
+        sys.path.insert(0, str(ROOT / "s8_retrieval"))
+        from embedder import get_embedder
+        from retrieve import Retriever
+        retriever = Retriever(rag_index, get_embedder())
+        hits_all = []
+        for i in range(0, len(rows), 32):
+            hits_all += retriever.search([r["q"] for r in rows[i:i + 32]], k=rag_k)
+        log.info("retrieval完了: %d問 × top%d (backend=%s)", len(rows), rag_k,
+                 retriever.meta["backend"])
+
+    n_ok = n_gold_ctx = 0
     details = []
     for i, qa in enumerate(rows):
-        r = client.chat.completions.create(
-            model=model, temperature=0.0, max_tokens=max_tokens,
-            messages=[{"role": "system", "content": EVAL_SYS},
-                      {"role": "user", "content": qa["q"]}],
-            extra_body={"chat_template_kwargs": chat_kwargs} if chat_kwargs else {})
-        pred = (r.choices[0].message.content or "").strip()
+        hits = hits_all[i] if hits_all is not None else []
+        if dry_run:                           # 配管検証: 生成をgoldでモック(正答率1.0が正常)
+            pred = qa["a"]
+        else:
+            r = client.chat.completions.create(
+                model=model, temperature=0.0, max_tokens=max_tokens,
+                messages=[{"role": "system", "content": RAG_SYS if hits else EVAL_SYS},
+                          {"role": "user",
+                           "content": build_rag_user(qa["q"], hits) if hits else qa["q"]}],
+                extra_body={"chat_template_kwargs": chat_kwargs} if chat_kwargs else {})
+            pred = (r.choices[0].message.content or "").strip()
         ok = score_answer(pred, qa["a"])
         n_ok += ok
-        details.append({**qa, "pred": pred, "ok": ok})
+        d = {**qa, "pred": pred, "ok": ok}
+        if hits_all is not None:              # 誤答分析用: 検索ミスと読解ミスを切り分ける
+            d["ctx_sources"] = [h["source"] for h in hits]
+            d["gold_in_ctx"] = int(qa["source"] in d["ctx_sources"])
+            n_gold_ctx += d["gold_in_ctx"]
+        details.append(d)
         if (i + 1) % 25 == 0:
             log.info("%d/%d 正答率 %.3f", i + 1, len(rows), n_ok / (i + 1))
     acc = n_ok / max(len(rows), 1)
     out_p = pathlib.Path(out_dir); out_p.mkdir(parents=True, exist_ok=True)
     report = {"tag": tag, "n": len(rows), "probe_acc": round(acc, 4)}
+    if hits_all is not None:
+        report |= {"rag_k": rag_k,
+                   "gold_in_ctx_rate": round(n_gold_ctx / max(len(rows), 1), 4)}
+    if dry_run:
+        report["dry_run"] = True
     (out_p / f"eval_probe_{tag}.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     with (out_p / f"eval_probe_{tag}_details.jsonl").open("w", encoding="utf-8") as w:
@@ -149,6 +195,10 @@ def main() -> None:
     ap.add_argument("--n-per-doc", type=int, default=4)
     ap.add_argument("--max-chars", type=int, default=12000)
     ap.add_argument("--max-tokens", type=int, default=100)
+    ap.add_argument("--rag", action="store_true", help="loop12: open-book(RAG)評価")
+    ap.add_argument("--index", default="/data/retriever", help="s8_retrieval インデックス")
+    ap.add_argument("--rag-k", type=int, default=5)
+    ap.add_argument("--dry-run", action="store_true", help="生成をgoldでモック(配管検証)")
     a = ap.parse_args()
     if a.generate:
         run_generate(a.probe, a.qa, a.n_per_doc, a.max_chars,
@@ -156,7 +206,8 @@ def main() -> None:
     if a.eval_:
         kwargs = json.loads(os.environ.get("EVAL_CHAT_KWARGS", "{}") or "{}")
         run_eval(a.qa, a.tag, a.out, os.environ.get("OPENAI_BASE_URL", ""), kwargs,
-                 a.max_tokens)
+                 a.max_tokens, rag_index=a.index if a.rag else "", rag_k=a.rag_k,
+                 dry_run=a.dry_run)
     if not (a.generate or a.eval_):
         log.error("--generate か --eval を指定"); sys.exit(1)
 
