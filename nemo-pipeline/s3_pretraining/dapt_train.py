@@ -115,8 +115,15 @@ def main() -> None:
     if os.environ.get("MLFLOW_TRACKING_URI"):
         try:
             from lightning.pytorch.loggers import MLFlowLogger
-            loggers.append(MLFlowLogger(experiment_name="dapt",
-                                        tracking_uri=os.environ["MLFLOW_TRACKING_URI"]))
+
+            class _IntStepMLFlowLogger(MLFlowLogger):
+                """mlflow 3.x は Metric.step に int を強制するが、NeMo/Lightning 経由で
+                step が float(1.0) で届き TypeError で全rank死する（実機で確定）。"""
+                def log_metrics(self, metrics, step=None):
+                    super().log_metrics(metrics, int(step) if step is not None else None)
+
+            loggers.append(_IntStepMLFlowLogger(experiment_name="dapt",
+                                                tracking_uri=os.environ["MLFLOW_TRACKING_URI"]))
         except (ImportError, ModuleNotFoundError) as e:
             # nemo:25.04 は mlflow 非同梱。追跡は落として学習は続行（lossはstdout+ckptログに残る）
             print(f"⚠ MLflow logger 無効（{e}）— 追跡なしで続行")
