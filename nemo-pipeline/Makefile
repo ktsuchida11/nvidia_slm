@@ -32,7 +32,7 @@ MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 # データビューア用ポート（衝突時は hostpath.mk で上書き）
 VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill dapt-prep relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-test tracking tensorboard viewer clean
+.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill dapt-prep probe-gen probe-eval relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-test tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -190,6 +190,13 @@ mlflow:              ## MLflowサーバ起動（:5000, データはresults/mlrun
 # --- 学習（ローカル64GB or 借りGPU。K8s不要、Dockerのみ） ---------------------
 MLFLOW_URI ?= http://host.docker.internal:5000
 TRACK := -e MLFLOW_TRACKING_URI=$(MLFLOW_URI) --add-host=host.docker.internal:host-gateway
+
+probe-gen:           ## loop10 P5: probe種文書からknowledge-probe QAを教師生成（要ANTHROPIC_API_KEY。Macから。中断再開可）
+	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
+	  python /pipeline/s6_evaluation/probe_qa.py --generate $(if $(N_PER_DOC),--n-per-doc $(N_PER_DOC))"
+probe-eval:          ## loop10 P5: closed-book probe評価（配信中モデルへ。TAG=dapt10等・採点ローカル）
+	$(RUN) -e OPENAI_BASE_URL -e OPENAI_API_KEY -e EVAL_CHAT_KWARGS $(PY_IMG) bash -lc "(pip -q install openai 2>/dev/null || true) && \
+	  python /pipeline/s6_evaluation/probe_qa.py --eval --tag $(TAG)"
 
 dapt:                ## S3 継続事前学習（loop10で実体化。DAPT_CFG=/pipeline/s3_pretraining/dapt.yaml、GPU数はDAPT_GPUS）
 	$(RUN) $(GPU) $(TRACK) --shm-size=16g -e DAPT_CFG -e DAPT_GPUS -e DAPT_REPREP -e DAPT_PIP_UPGRADE -e HF_TOKEN \
