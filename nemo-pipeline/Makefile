@@ -32,7 +32,7 @@ MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 # データビューア用ポート（衝突時は hostpath.mk で上書き）
 VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill dapt-prep probe-gen probe-eval relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-test tracking tensorboard viewer clean
+.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill dapt-prep probe-gen probe-eval relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-test serve-embed retriever-index retriever-index-dry retriever-recall retriever-recall-dry rag-eval rag-eval-dry tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -260,5 +260,38 @@ guardrails-test:     ## 検証（公式evaluate + garak攻撃。GUARD_PORTをgar
 	   python -m garak --model_type rest --generator_option_file /tmp/garak_rest.json \
 	     --probes promptinject --report_prefix /results/garak"
 
+# --- S8 Retriever（loop12: RAG vs DAPT費用対効果比較。docs/loop-12-plan.md） --
+EMBED_PORT ?= 8001
+NIM_EMBED_IMG ?= nvcr.io/nim/nvidia/llama-3.2-nv-embedqa-1b-v2:latest
+serve-embed:         ## loop12: NeMo Retriever embedding NIM 起動 :8001（ノード・要 docker login nvcr.io + NGC_API_KEY）
+	docker run --rm -d --name embed-nim $(GPU) --shm-size=16g \
+	  -p 127.0.0.1:$(EMBED_PORT):8000 -e NGC_API_KEY \
+	  -v $${HOME}/.cache/nim:/opt/nim/.cache $(NIM_EMBED_IMG)
+	@echo "起動確認: docker logs -f embed-nim → 'Uvicorn running' 後に make retriever-index"
+
+retriever-index:     ## loop12: corpus→チャンク→埋め込み→インデックス（中断再開可・再開時は再課金ゼロ。EMBED_BACKEND=nim|hf|dummy、LIMIT=Nで配管検証）
+	$(RUN) -e EMBED_BACKEND -e EMBED_BASE_URL -e EMBED_MODEL -e NGC_API_KEY $(PY_IMG) bash -lc \
+	  "(pip -q install numpy openai 2>/dev/null || true) && \
+	   python /pipeline/s8_retrieval/build_index.py --in $(or $(CORPUS),/data/pretrain/corpus_train.jsonl) \
+	     --out $(or $(INDEX),/data/retriever) $(if $(LIMIT),--limit $(LIMIT))"
+retriever-index-dry: ## loop12 配管検証: dummy埋め込み×probe50文書（GPU/API不要・数秒）
+	$(RUN) -e EMBED_BACKEND=dummy $(PY_IMG) bash -lc "(pip -q install numpy 2>/dev/null || true) && \
+	  python /pipeline/s8_retrieval/build_index.py --in /data/pretrain/corpus_probe.jsonl --out /data/retriever_dry"
+retriever-recall:    ## loop12 評価①: 検索品質 recall@k/MRR（gold doc_id照合・採点ローカル。TAG=recall_nim等）
+	$(RUN) -e EMBED_BACKEND -e EMBED_BASE_URL -e EMBED_MODEL -e NGC_API_KEY $(PY_IMG) bash -lc \
+	  "(pip -q install numpy openai 2>/dev/null || true) && \
+	   python /pipeline/s8_retrieval/recall_eval.py --index $(or $(INDEX),/data/retriever) --tag $(TAG)"
+retriever-recall-dry: ## loop12 配管検証: dryインデックスでrecall配管を通す（GPU/API不要）
+	$(RUN) -e EMBED_BACKEND=dummy $(PY_IMG) bash -lc "(pip -q install numpy 2>/dev/null || true) && \
+	  python /pipeline/s8_retrieval/recall_eval.py --index /data/retriever_dry --tag recall_dry --only-indexed"
+rag-eval:            ## loop12 評価②: base+RAG probe評価（要 配信中モデル+インデックス。TAG=rag199・RAG_K=5）
+	$(RUN) -e OPENAI_BASE_URL -e OPENAI_API_KEY -e EVAL_CHAT_KWARGS -e EMBED_BACKEND -e EMBED_BASE_URL -e EMBED_MODEL -e NGC_API_KEY $(PY_IMG) bash -lc \
+	  "(pip -q install numpy openai 2>/dev/null || true) && \
+	   python /pipeline/s6_evaluation/probe_qa.py --eval --rag --index $(or $(INDEX),/data/retriever) \
+	     --rag-k $(or $(RAG_K),5) --tag $(TAG)"
+rag-eval-dry:        ## loop12 配管検証: RAG評価の配管（配信・API不要。検索は実行・生成はgoldモック=正答率1.0が正常）
+	$(RUN) -e EMBED_BACKEND=dummy $(PY_IMG) bash -lc "(pip -q install numpy 2>/dev/null || true) && \
+	  python /pipeline/s6_evaluation/probe_qa.py --eval --rag --dry-run --index /data/retriever_dry --tag rag_dry"
+
 clean:
-	docker rm -f guardrails mlflow tb dataviewer 2>/dev/null || true
+	docker rm -f guardrails mlflow tb dataviewer embed-nim 2>/dev/null || true
