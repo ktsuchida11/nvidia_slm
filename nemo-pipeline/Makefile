@@ -293,5 +293,27 @@ rag-eval-dry:        ## loop12 配管検証: RAG評価の配管（配信・API�
 	$(RUN) -e EMBED_BACKEND=dummy $(PY_IMG) bash -lc "(pip -q install numpy 2>/dev/null || true) && \
 	  python /pipeline/s6_evaluation/probe_qa.py --eval --rag --dry-run --index /data/retriever_dry --tag rag_dry"
 
+# --- loop13: grounded QA SFT（読解ミス23ppの回収。docs/loop-13-plan.md） ------
+grounded-seed:       ## loop13: probe-50以外から種文書を決定的サンプル（$0・CPU。N_DOCS=500）
+	$(RUN) $(PY_IMG) python /pipeline/s8_retrieval/build_grounded_sft.py --seed \
+	  --n-docs $(or $(N_DOCS),500)
+grounded-gen:        ## loop13 ゲートC: 教師QA生成（要ANTHROPIC_API_KEY・承認後。単価実測は GEN_DOCS=13、全量は指定なし。追記式で再課金ゼロ再開）
+	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL $(PY_IMG) bash -lc \
+	  "(pip -q install anthropic 2>/dev/null || true) && \
+	   $(if $(GEN_DOCS),head -n $(GEN_DOCS) /data/pretrain/grounded_seed.jsonl > /tmp/seed.jsonl &&,) \
+	   python /pipeline/s6_evaluation/probe_qa.py --generate \
+	     --probe $(if $(GEN_DOCS),/tmp/seed.jsonl,/data/pretrain/grounded_seed.jsonl) \
+	     --qa /data/pretrain/grounded_qa.jsonl $(if $(N_PER_DOC),--n-per-doc $(N_PER_DOC))"
+grounded-build:      ## loop13: リーク検査→実検索top5→SFTデータ化（ノード: 要NIM稼働+全量インデックス → /data/pretrain/grounded/）
+	$(RUN) -e EMBED_BACKEND -e EMBED_BASE_URL -e EMBED_MODEL -e NGC_API_KEY $(PY_IMG) bash -lc \
+	  "(pip -q install numpy openai 2>/dev/null || true) && \
+	   python /pipeline/s8_retrieval/build_grounded_sft.py --build --index $(or $(INDEX),/data/retriever) \
+	     $(if $(RAG_K),--k $(RAG_K))"
+grounded-dry:        ## loop13 配管検証: seed→合成QA→dummy索引→build を自己完結で通す（$0・数秒）
+	$(RUN) $(PY_IMG) bash -lc "(pip -q install numpy 2>/dev/null || true) && \
+	  python /pipeline/s8_retrieval/build_grounded_sft.py --dry --out /data/pretrain/grounded_dry"
+grounded-sft:        ## loop13 ゲートA/B: LoRA SFT（承認後。ckptは/ckpt/sft_grounded に分離=loop8罠対策）
+	$(MAKE) sft SFT_CFG=/pipeline/s4_sft/sft_grounded.yaml
+
 clean:
 	docker rm -f guardrails mlflow tb dataviewer embed-nim 2>/dev/null || true
