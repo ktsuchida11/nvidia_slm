@@ -34,9 +34,8 @@ policy:
   train_global_batch_size: 32
   train_micro_batch_size: 1
   # RAG文脈は top5×800字≈4,000字+質問。2560では大半が超過（loss_multiplier=0で無効化）
-  # されるため4096が必要。★loop1でseq4096の活性化OOM実測あり（L40S 44GB・1GPU）→
-  # ゲートAの煙試験で要実機確認。OOM時のフォールバック: cluster.gpus_per_node: 2 +
-  # dtensor_cfg.tensor_parallel_size: 2（活性化をTPで分割）
+  # されるため4096が必要。ゲートA実機(2026-08-12): 1GPUはbackwardでOOM（43.46/44.39GiB使用・
+  # 1.89GiB要求・expandable_segments込み）→ gpus_per_node 2 + TP=2 で活性化を分割
   max_total_sequence_length: 4096
   precision: "bfloat16"
 
@@ -46,7 +45,7 @@ policy:
     cpu_offload: false
     sequence_parallel: false
     activation_checkpointing: true
-    tensor_parallel_size: 1
+    tensor_parallel_size: 2
     context_parallel_size: 1
     dp_replicate_size: 1
     custom_parallel_plan: null
@@ -58,10 +57,10 @@ policy:
       match_all_linear: true
       dim: 16
       alpha: 32
-      dropout: 0.05
+      dropout: 0.0          # TP=2でLoRA dropoutがPartial未対応(aten.native_dropout・ゲートA実機)
       dropout_position: "post"
       lora_A_init: "xavier"
-      use_triton: true
+      use_triton: false     # TP>1非対応(NeMo-RLのassert・ゲートA実機)
 
   megatron_cfg:
     enabled: false
@@ -134,5 +133,5 @@ logger:
     flush_interval: 10
 
 cluster:
-  gpus_per_node: 1             # seq4096がOOMなら 2 + TP=2 へ（policy側コメント参照）
+  gpus_per_node: 2             # ゲートA実機: seq4096は1GPU(L40S 44GB)でOOM実測 → TP=2で分割
   num_nodes: 1
