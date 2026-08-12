@@ -65,6 +65,21 @@ def test_answer_in_hits_normalizes_commas():
     assert not answer_in_hits("無関係", hits, "G")  # gold以外のチャンクは照合対象外
 
 
+def test_answer_in_hits_table_composed():
+    """有報の表: セル値+ヘッダ単位の合成答（P2実測52問中21問）を数値トークン照合で残す。"""
+    hits = [{"source": "G", "text": "5【従業員の状況】(1)連結会社の状況 従業員数(人)867(1,123)"
+                                    "(注)1.従業員数は就業人員であります。平均勤続年数20.3年"}]
+    assert answer_in_hits("867名", hits, "G")        # 単位はヘッダ由来 → 数値のみ照合
+    assert answer_in_hits("20.3年", hits, "G")       # 小数
+    assert not answer_in_hits("868名", hits, "G")    # 値そのものが無ければ破棄
+    # 複数数値の答えは全数値の実在が必要
+    hits2 = [{"source": "G", "text": "子会社の数173社 関連会社28社"}]
+    assert answer_in_hits("子会社173社、関連会社28社", hits2, "G")
+    assert not answer_in_hits("子会社173社、関連会社29社", hits2, "G")
+    # 非数値の答えは従来どおり逐語包含
+    assert not answer_in_hits("名古屋市", hits, "G")
+
+
 def test_build_examples_three_branches_and_noans_cap():
     gold_hit = [{"source": "G", "text": "売上高は1,485億円。"}]
     miss_hit = [{"source": "X", "text": "別文書。"}]

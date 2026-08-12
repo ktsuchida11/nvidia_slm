@@ -23,6 +23,7 @@ import argparse
 import json
 import logging
 import pathlib
+import re
 import sys
 import tempfile
 import zlib
@@ -98,10 +99,23 @@ def _norm_for_containment(s: str) -> str:
 
 
 def answer_in_hits(answer: str, hits: list[dict], gold_source: str) -> bool:
-    """答えの事実が gold 文書由来のチャンク内に実在するか（正規化包含）。"""
-    ctx = "".join(h["text"] for h in hits if h["source"] == gold_source)
+    """答えの事実が gold 文書由来のチャンク内に実在するか。
+
+    数値を含む答えは**数値トークン全部の包含**で判定する。有報の表は
+    「従業員数(人) … 867(1,123)」のようにセル値+ヘッダ単位で答えが合成される
+    （P2サンプル実測: 52問中21問が逐語不在）ため、逐語包含だと表読解の学習例 —
+    loop12 誤答分類の最大クラスタ = 一番教えたい型 — を捨ててしまう。
+    非数値の答え（固有名詞等）は従来どおり正規化逐語包含。
+    """
+    ctx = _norm_for_containment("".join(h["text"] for h in hits
+                                        if h["source"] == gold_source))
     na = _norm_for_containment(answer)
-    return bool(na) and na in _norm_for_containment(ctx)
+    if not na or not ctx:
+        return False
+    nums = [n.replace(",", "") for n in re.findall(r"\d[\d,]*(?:\.\d+)?", answer)]
+    if nums:
+        return all(n in ctx for n in nums)
+    return na in ctx
 
 
 def split_of(q: str, valid_pct: int) -> str:
