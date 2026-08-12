@@ -314,6 +314,20 @@ grounded-dry:        ## loop13 配管検証: seed→合成QA→dummy索引→bui
 	  python /pipeline/s8_retrieval/build_grounded_sft.py --dry --out /data/pretrain/grounded_dry"
 grounded-sft:        ## loop13 ゲートA/B: LoRA SFT（承認後。ckptは/ckpt/sft_grounded に分離=loop8罠対策）
 	$(MAKE) sft SFT_CFG=/pipeline/s4_sft/sft_grounded.yaml
+grounded-convert:    ## loop13: sft_grounded ckpt→HF変換（/ckpt/sft_grounded/hf。convert-sftは/ckpt/sft/hf=loop9資産を上書きするため専用化）
+	$(RUN) -e HF_TOKEN -e HUGGING_FACE_HUB_TOKEN=$(HF_TOKEN) -e CKPT_ROOT=/ckpt/sft_grounded \
+	  -v $${HF_HOME:-$$HOME/.cache/huggingface}:/root/.cache/huggingface \
+	  $(RL_IMG) bash /pipeline/s4_sft/convert_sft_to_hf.sh $(STEP)
+grounded-serve:      ## loop13: sft13配信（vLLM）:8002。要 make grounded-convert 済み
+	docker run --rm -d --name llm-gen $(GPU) --ipc=host \
+	  -p 127.0.0.1:8002:8000 -e HUGGING_FACE_HUB_TOKEN=$(HF_TOKEN) \
+	  -v $${HF_HOME:-$$HOME/.cache/huggingface}:/root/.cache/huggingface \
+	  -v $(HOST_PWD)/checkpoints:/ckpt \
+	  vllm/vllm-openai:latest \
+	  --model /ckpt/sft_grounded/hf --served-model-name nemotron-gen \
+	  --host 0.0.0.0 --port 8000 --trust-remote-code --mamba_ssm_cache_dtype float32 \
+	  --max-num-seqs 64 --max-model-len 131072
+	@echo "起動確認: docker logs -f llm-gen → 'Application startup complete' 後に make rag-eval TAG=sft13"
 
 clean:
 	docker rm -f guardrails mlflow tb dataviewer embed-nim 2>/dev/null || true
