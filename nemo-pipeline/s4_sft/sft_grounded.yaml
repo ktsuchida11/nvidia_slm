@@ -60,7 +60,7 @@ policy:
       dropout: 0.05
       dropout_position: "post"
       lora_A_init: "xavier"
-      use_triton: true
+      use_triton: false     # TP>1非対応(NeMo-RLのassert・ゲートA実機)
 
   megatron_cfg:
     enabled: false
