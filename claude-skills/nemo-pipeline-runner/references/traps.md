@@ -43,6 +43,15 @@
 | NIM 稼働中に vLLM が「Free memory < utilization 0.92」で**全GPU**起動不能 | `--gpus all` の NIM は Triton CUDA pool を全GPUに ~4GB ずつ確保 | 同居時は**両サービスとも** `make serve-* GPU='--gpus device=N'` で別GPUにピン留め |
 | tmux 内で埋め込みAPIに「Name or service not known」 | `tmux new` は新シェル → 外で取った `EMB_IP` が空になり URL のホスト名が消える | ブリッジIP取得は tmux セッション内でやり直す |
 
+## TP=2 での LoRA SFT（loop13 — seq4096が必要になったら読む）
+
+| 症状 | 原因 | 対処 |
+|---|---|---|
+| seq4096 の 9B LoRA が backward で OOM | L40S 44GB×1 は activation checkpointing 込みでも不足（43.5GiB使用+1.9GiB要求） | `cluster.gpus_per_node: 2` + `dtensor_cfg.tensor_parallel_size: 2` |
+| TP=2 にすると起動時 assert 死 | NeMo-RL: 「Triton is not supported when tensor_parallel_size > 1」 | `lora_cfg.use_triton: false`（速度低下のみ・結果に影響なし） |
+| TP=2 で train 初回に実行時死 | `aten.native_dropout with Partial is not supported`（LoRA dropout が TP シャーディング未対応） | `lora_cfg.dropout: 0.0`（小規模LoRAなら実質影響なし・過学習は val loss で監視） |
+| 旧 baseline と相対比較できない（母数 n 不一致で eval が拒否） | 評価セットが世代交代している（loop9: n=300 → loop13: n=70） | base を**同一 run 条件で再測定**してから比較。baseline タグは評価セットの世代とペアで管理 |
+
 ## NeMo Curator 1.3.0 pip（loop10）
 
 | 症状 | 原因 | 対処 |

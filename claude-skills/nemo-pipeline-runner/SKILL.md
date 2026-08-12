@@ -74,7 +74,7 @@ description: >
 |---|---|
 | Curator（言語ID/品質/dedup） | 済（CPU版。PII/GPU dedup はGPU専用と確定） |
 | NeMo Framework DAPT（AutoModel経路） | 済（loop10。Mamba+Attentionハイブリッドは Megatron変換不可） |
-| NeMo-RL SFT / GRPO | 済（loop1-9） |
+| NeMo-RL SFT / GRPO | 済（loop1-9。loop13でTP=2 LoRAも消化: seq4096は2GPU+TP=2・use_triton/dropout無効が必須） |
 | S7 Guardrails（NeMo Guardrails/garak） | **未実機検証**（実装はあり: make guardrails） |
 | NeMo Retriever embedding NIM（RAG） | 済（loop12。llama-3.2-nv-embedqa-1b-v2 TRT FP8/L40S・dim2048。probe 0.0402→0.4724 で DAPT知識注入をクローズ）。**rerank NIM は未消化** |
 
