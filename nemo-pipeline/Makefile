@@ -32,7 +32,7 @@ MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 # データビューア用ポート（衝突時は hostpath.mk で上書き）
 VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill dapt-prep probe-gen probe-eval relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-test serve-embed retriever-index retriever-index-dry retriever-recall retriever-recall-dry rag-eval rag-eval-dry tracking tensorboard viewer clean
+.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill dapt-prep probe-gen probe-eval relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-test serve-embed retriever-index retriever-index-dry retriever-recall retriever-recall-dry rag-eval rag-eval-dry serve-rerank rag-rerank-dry tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -284,14 +284,28 @@ retriever-recall:    ## loop12 評価①: 検索品質 recall@k/MRR（gold doc_i
 retriever-recall-dry: ## loop12 配管検証: dryインデックスでrecall配管を通す（GPU/API不要）
 	$(RUN) -e EMBED_BACKEND=dummy $(PY_IMG) bash -lc "(pip -q install numpy 2>/dev/null || true) && \
 	  python /pipeline/s8_retrieval/recall_eval.py --index /data/retriever_dry --tag recall_dry --only-indexed"
-rag-eval:            ## loop12 評価②: base+RAG probe評価（要 配信中モデル+インデックス。TAG=rag199・RAG_K=5）
-	$(RUN) -e OPENAI_BASE_URL -e OPENAI_API_KEY -e EVAL_CHAT_KWARGS -e EMBED_BACKEND -e EMBED_BASE_URL -e EMBED_MODEL -e NGC_API_KEY $(PY_IMG) bash -lc \
+rag-eval:            ## loop12 評価②: base+RAG probe評価（要 配信中モデル+インデックス。TAG=rag199・RAG_K=5。loop14: RERANK=1 RERANK_K0=50 で rerank 経由）
+	$(RUN) -e OPENAI_BASE_URL -e OPENAI_API_KEY -e EVAL_CHAT_KWARGS -e EMBED_BACKEND -e EMBED_BASE_URL -e EMBED_MODEL -e RERANK_BACKEND -e RERANK_BASE_URL -e RERANK_MODEL -e NGC_API_KEY $(PY_IMG) bash -lc \
 	  "(pip -q install numpy openai 2>/dev/null || true) && \
 	   python /pipeline/s6_evaluation/probe_qa.py --eval --rag --index $(or $(INDEX),/data/retriever) \
-	     --rag-k $(or $(RAG_K),5) --tag $(TAG)"
+	     --rag-k $(or $(RAG_K),5) $(if $(RERANK),--rerank --rerank-k0 $(or $(RERANK_K0),50)) --tag $(TAG)"
 rag-eval-dry:        ## loop12 配管検証: RAG評価の配管（配信・API不要。検索は実行・生成はgoldモック=正答率1.0が正常）
 	$(RUN) -e EMBED_BACKEND=dummy $(PY_IMG) bash -lc "(pip -q install numpy 2>/dev/null || true) && \
 	  python /pipeline/s6_evaluation/probe_qa.py --eval --rag --dry-run --index /data/retriever_dry --tag rag_dry"
+
+# --- loop14: rerank NIM（検索律速の解消。docs/loop-14-plan.md） ---------------
+RERANK_PORT ?= 8003
+NIM_RERANK_IMG ?= nvcr.io/nim/nvidia/llama-3.2-nv-rerankqa-1b-v2:latest
+serve-rerank:        ## loop14: rerank NIM 起動 :8003（ノード・要 docker login nvcr.io + NGC_API_KEY。embed と同居: GPU='--gpus device=0'）
+	docker run --rm -d --name rerank-nim $(GPU) --shm-size=16g \
+	  -p 127.0.0.1:$(RERANK_PORT):8000 -e NGC_API_KEY \
+	  -v $${HOME}/.cache/nim:/opt/nim/.cache $(NIM_RERANK_IMG)
+	@echo "起動確認: docker logs -f rerank-nim → 'Uvicorn running' 後に make rag-eval RERANK=1"
+rag-rerank-dry:      ## loop14 配管検証: rerank込みRAG評価の配管（$0。dummy埋め込み+dummy rerank・生成goldモック=正答率1.0が正常）
+	$(RUN) -e EMBED_BACKEND=dummy -e RERANK_BACKEND=dummy $(PY_IMG) bash -lc \
+	  "(pip -q install numpy 2>/dev/null || true) && \
+	   python /pipeline/s6_evaluation/probe_qa.py --eval --rag --rerank --rerank-k0 20 --dry-run \
+	     --index /data/retriever_dry --tag rag_rerank_dry"
 
 # --- loop13: grounded QA SFT（読解ミス23ppの回収。docs/loop-13-plan.md） ------
 grounded-seed:       ## loop13: probe-50以外から種文書を決定的サンプル（$0・CPU。N_DOCS=500）
@@ -330,4 +344,4 @@ grounded-serve:      ## loop13: sft13配信（vLLM）:8002。要 make grounded-c
 	@echo "起動確認: docker logs -f llm-gen → 'Application startup complete' 後に make rag-eval TAG=sft13"
 
 clean:
-	docker rm -f guardrails mlflow tb dataviewer embed-nim 2>/dev/null || true
+	docker rm -f guardrails mlflow tb dataviewer embed-nim rerank-nim 2>/dev/null || true

@@ -14,6 +14,11 @@ loop12 拡張(--rag): s8_retrieval のインデックスで検索した上位チ
   RAG評価(ノード):   make rag-eval TAG=rag199
   配管検証(ローカル): make rag-eval-dry  (検索は実行・生成はgoldモック=正答率1.0が正常)
 採点は完全ローカル(数値=相対誤差1%・文字列=正規化包含)。API不要。
+
+loop14 拡張(--rerank): 検索を --rerank-k0 (既定50) で広く取り、s8_retrieval/reranker.py
+（rerank NIM）で --rag-k 件に精密絞り込みしてからプロンプトに入れる。
+  RAG+rerank評価(ノード): make rag-eval TAG=rag199_rr RERANK=1 RERANK_K0=50
+  配管検証(ローカル):      make rag-rerank-dry
 """
 from __future__ import annotations
 import argparse, json, logging, os, pathlib, re, sys, unicodedata
@@ -123,7 +128,7 @@ def run_generate(probe_path: str, out_path: str, n_per_doc: int, max_chars: int,
 # ---- 評価（配信モデルへ出題・ローカル採点。--rag で open-book） ---------------
 def run_eval(qa_path: str, tag: str, out_dir: str, base_url: str, chat_kwargs: dict,
              max_tokens: int, rag_index: str = "", rag_k: int = 5,
-             dry_run: bool = False) -> None:
+             rerank_k0: int = 0, dry_run: bool = False) -> None:
     client = model = None
     if not dry_run:
         from openai import OpenAI
@@ -133,16 +138,28 @@ def run_eval(qa_path: str, tag: str, out_dir: str, base_url: str, chat_kwargs: d
     rows = [json.loads(l) for l in pathlib.Path(qa_path).open(encoding="utf-8") if l.strip()]
 
     hits_all = None
+    gold_in_k0 = None
+    rr = None
     if rag_index:                             # loop12: 検索を先に一括実行（埋め込みもバッチ）
         sys.path.insert(0, str(ROOT / "s8_retrieval"))
         from embedder import get_embedder
         from retrieve import Retriever
         retriever = Retriever(rag_index, get_embedder())
+        k_search = rerank_k0 if rerank_k0 else rag_k
         hits_all = []
         for i in range(0, len(rows), 32):
-            hits_all += retriever.search([r["q"] for r in rows[i:i + 32]], k=rag_k)
-        log.info("retrieval完了: %d問 × top%d (backend=%s)", len(rows), rag_k,
+            hits_all += retriever.search([r["q"] for r in rows[i:i + 32]], k=k_search)
+        log.info("retrieval完了: %d問 × top%d (backend=%s)", len(rows), k_search,
                  retriever.meta["backend"])
+        if rerank_k0:                         # loop14: 広い候補を rerank で rag_k に絞る
+            from reranker import get_reranker
+            rr = get_reranker()
+            # rerank の天井の物差し: gold が k0 候補に入っていたか（入っていなければ回収不能）
+            gold_in_k0 = [int(rows[i]["source"] in {h["source"] for h in hits_all[i]})
+                          for i in range(len(rows))]
+            hits_all = [rr.rerank(rows[i]["q"], hits_all[i], rag_k)
+                        for i in range(len(rows))]
+            log.info("rerank完了: top%d → top%d (backend=%s)", rerank_k0, rag_k, rr.name)
 
     n_ok = n_gold_ctx = 0
     details = []
@@ -165,6 +182,8 @@ def run_eval(qa_path: str, tag: str, out_dir: str, base_url: str, chat_kwargs: d
             d["ctx_sources"] = [h["source"] for h in hits]
             d["gold_in_ctx"] = int(qa["source"] in d["ctx_sources"])
             n_gold_ctx += d["gold_in_ctx"]
+            if gold_in_k0 is not None:
+                d["gold_in_k0"] = gold_in_k0[i]
         details.append(d)
         if (i + 1) % 25 == 0:
             log.info("%d/%d 正答率 %.3f", i + 1, len(rows), n_ok / (i + 1))
@@ -174,6 +193,9 @@ def run_eval(qa_path: str, tag: str, out_dir: str, base_url: str, chat_kwargs: d
     if hits_all is not None:
         report |= {"rag_k": rag_k,
                    "gold_in_ctx_rate": round(n_gold_ctx / max(len(rows), 1), 4)}
+    if gold_in_k0 is not None:
+        report |= {"rerank_k0": rerank_k0, "rerank_backend": rr.name,
+                   "gold_in_k0_rate": round(sum(gold_in_k0) / max(len(rows), 1), 4)}
     if dry_run:
         report["dry_run"] = True
     (out_p / f"eval_probe_{tag}.json").write_text(
@@ -198,6 +220,8 @@ def main() -> None:
     ap.add_argument("--rag", action="store_true", help="loop12: open-book(RAG)評価")
     ap.add_argument("--index", default="/data/retriever", help="s8_retrieval インデックス")
     ap.add_argument("--rag-k", type=int, default=5)
+    ap.add_argument("--rerank", action="store_true", help="loop14: k0候補をrerankでrag-kに絞る")
+    ap.add_argument("--rerank-k0", type=int, default=50)
     ap.add_argument("--dry-run", action="store_true", help="生成をgoldでモック(配管検証)")
     a = ap.parse_args()
     if a.generate:
@@ -207,7 +231,7 @@ def main() -> None:
         kwargs = json.loads(os.environ.get("EVAL_CHAT_KWARGS", "{}") or "{}")
         run_eval(a.qa, a.tag, a.out, os.environ.get("OPENAI_BASE_URL", ""), kwargs,
                  a.max_tokens, rag_index=a.index if a.rag else "", rag_k=a.rag_k,
-                 dry_run=a.dry_run)
+                 rerank_k0=a.rerank_k0 if a.rerank else 0, dry_run=a.dry_run)
     if not (a.generate or a.eval_):
         log.error("--generate か --eval を指定"); sys.exit(1)
 
