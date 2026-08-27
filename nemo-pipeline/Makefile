@@ -255,12 +255,14 @@ GARAK_GENS   ?= 1                      # 生成回数。既定の複数生成は
 # スモークで空文字が返るなら GARAK_RESP_FIELD='$$.choices[0].message.content' に切り替える
 GARAK_RESP_FIELD ?= $$.messages[-1].content
 N_PROBE      ?= 14                     # 良性セットに足す probe 質問数（固定6問 + これ）
+# host.docker.internal は 127.0.0.1 バインドのポートに届かない（loop12 の罠）。
+# 実機では GUARD_HOST/GEN_HOST に対象コンテナのブリッジIPを渡し、ポートも**コンテナ側**にする
+GARAK_GUARD_PORT ?= $(if $(GUARD_HOST),8100,$(GUARD_PORT))
 # nemoguardrails/garak を焼いたイメージ。毎回 pip install するとノードの課金時間を溶かす
 GUARD_IMG    ?= nemo-guardrails:local
 # nemoguardrails 0.23.0 は single-config モードを持ち、**config_id = --config に渡したフォルダ名**
-# になる（server/api.py: single_config_mode。loop15 実機で確定）。config ディレクトリを
-# そのまま /config にマウントして渡すことで config_id が "config" に揃う
-GUARD_CONFIG ?= /config
+# になる（server/api.py: single_config_mode。loop15 実機で確定）。serve_rails.sh が
+# 描画後の config を /tmp/rails/config に置くので config_id は "config" に揃う
 
 guardrails-img:      ## loop15: nemoguardrails/garak 入りイメージをビルド（初回のみ・数分）
 	docker build -t $(GUARD_IMG) $(HOST_PWD)/s7_guardrails
@@ -273,15 +275,15 @@ guardrails:          ## サーバ起動（既定:8100。衝突時は GUARD_PORT 
 	docker run --rm -d --name guardrails -p 127.0.0.1:$(GUARD_PORT):8100 \
 	  --add-host=host.docker.internal:host-gateway \
 	  -e OPENAI_BASE_URL -e OPENAI_API_KEY=$${OPENAI_API_KEY:-dummy} \
-	  -v $(HOST_PWD)/s7_guardrails/config:/config $(GUARD_IMG) \
-	  nemoguardrails server --config $(GUARD_CONFIG) --port 8100
+	  -v $(HOST_PWD)/s7_guardrails:/s7:ro $(GUARD_IMG) bash /s7/serve_rails.sh
 	@echo "起動確認: docker logs -f guardrails → 'Uvicorn running'。config一覧は :$(GUARD_PORT)/v1/rails/configs"
 
 guardrails-test:     ## B2: garak標準ベンチ（レールあり :8100）+ 公式evaluate
 	$(RUN) $(GUARD_IMG) bash -lc \
 	  "set -e; \
 	   python /pipeline/s7_guardrails/make_garak_cfg.py --template /pipeline/s7_guardrails/garak_rest.json \
-	     --out /tmp/garak_rest.json --port $(GUARD_PORT) --model $(GUARD_MODEL) \
+	     --out /tmp/garak_rest.json --port $(GARAK_GUARD_PORT) --model $(GUARD_MODEL) \
+	     $(if $(GUARD_HOST),--host $(GUARD_HOST)) \
 	     --resp-field '$(GARAK_RESP_FIELD)' && \
 	   nemoguardrails evaluate moderation --config /pipeline/s7_guardrails/config \
 	     || echo '[warn] evaluate は参考値。失敗しても garak は続行する'; \
@@ -291,7 +293,8 @@ guardrails-test-raw: ## B1: garak標準ベンチのベースライン（レー�
 	$(RUN) -e OPENAI_API_KEY $(GUARD_IMG) bash -lc \
 	  "set -e; \
 	   python /pipeline/s7_guardrails/make_garak_cfg.py --template /pipeline/s7_guardrails/garak_rest_raw.json \
-	     --out /tmp/garak_rest_raw.json --model $(GUARD_MODEL) && \
+	     --out /tmp/garak_rest_raw.json --model $(GUARD_MODEL) \
+	     $(if $(GEN_HOST),--host $(GEN_HOST)) $(if $(GEN_PORT),--port $(GEN_PORT)) && \
 	   python -m garak --model_type rest --generator_option_file /tmp/garak_rest_raw.json \
 	     --probes $(GARAK_PROBES) --generations $(GARAK_GENS) --report_prefix /results/garak_raw"
 
@@ -312,8 +315,7 @@ guardrails-dry:      ## loop15 配管検証: スタブLLM×チェッカー（GPU
 	     --base-url http://127.0.0.1:8002/v1 --tag dry_benign --n-probe $(N_PROBE) --out /results"
 	@echo "期待: attack は ok_rate 低（スタブは拒否しない）/ benign は ok_rate 1.0（=誤爆ゼロ）"
 guardrails-dry-rails: ## loop15 配管検証(レール込み): スタブLLM + 実nemoguardrails（GPU不要。要 guardrails-img）
-	$(RUN) -e GUARD_CONFIG=$(GUARD_CONFIG) -v $(HOST_PWD)/s7_guardrails/config:/config \
-	  $(GUARD_IMG) bash /pipeline/s7_guardrails/dry_rails.sh
+	$(RUN) $(GUARD_IMG) bash /pipeline/s7_guardrails/dry_rails.sh
 
 # --- S8 Retriever（loop12: RAG vs DAPT費用対効果比較。docs/loop-12-plan.md） --
 EMBED_PORT ?= 8001
