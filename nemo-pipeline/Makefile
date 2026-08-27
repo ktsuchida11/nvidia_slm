@@ -251,9 +251,10 @@ GUARD_PORT   ?= 8100
 GUARD_MODEL  ?= nemotron-gen           # vLLM の --served-model-name と config.yml に一致させる
 GARAK_PROBES ?= promptinject,dan,encoding   # OWASP LLM01 系の標準ベンチ（英語）
 GARAK_GENS   ?= 1                      # 生成回数。既定の複数生成はGPU時間に直結するため1に絞る
-# nemoguardrails の応答は版により messages[] / OpenAI互換 choices[] のどちらもありうる。
-# スモークで空文字が返るなら GARAK_RESP_FIELD='$$.choices[0].message.content' に切り替える
-GARAK_RESP_FIELD ?= $$.messages[-1].content
+# 0.23.0 実測: リクエストに model を入れる（=必須）と応答は OpenAI互換 choices[] で返る。
+# 旧形式の版に当たったら GARAK_RESP_FIELD='$$.messages[-1].content' に切り替える
+# （誤ると garak は空文字を採点してしまい、静かに無意味な結果になる）
+GARAK_RESP_FIELD ?= $$.choices[0].message.content
 N_PROBE      ?= 14                     # 良性セットに足す probe 質問数（固定6問 + これ）
 # host.docker.internal は 127.0.0.1 バインドのポートに届かない（loop12 の罠）。
 # 実機では GUARD_HOST/GEN_HOST に対象コンテナのブリッジIPを渡し、ポートも**コンテナ側**にする
