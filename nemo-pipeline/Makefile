@@ -32,7 +32,7 @@ MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 # データビューア用ポート（衝突時は hostpath.mk で上書き）
 VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill dapt-prep probe-gen probe-eval relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-img guardrails-diag guardrails-test guardrails-test-raw guardrails-check guardrails-dry guardrails-dry-rails serve-embed retriever-index retriever-index-dry retriever-recall retriever-recall-dry rag-eval rag-eval-dry serve-rerank rag-rerank-dry tracking tensorboard viewer clean
+.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill dapt-prep probe-gen probe-eval relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-img guardrails-diag serve-llm-proxy guardrails-test guardrails-test-raw guardrails-check guardrails-dry guardrails-dry-rails serve-embed retriever-index retriever-index-dry retriever-recall retriever-recall-dry rag-eval rag-eval-dry serve-rerank rag-rerank-dry tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -264,6 +264,16 @@ GUARD_IMG    ?= nemo-guardrails:local
 # になる（server/api.py: single_config_mode。loop15 実機で確定）。serve_rails.sh が
 # 描画後の config を /tmp/rails/config に置くので config_id は "config" に揃う
 
+PROXY_PORT   ?= 8004
+PROXY_MAX_TOKENS ?= 256
+serve-llm-proxy:     ## loop15: guardrails→vLLM の間に挟む極小プロキシ（思考オフ+max_tokens注入）
+	docker rm -f llm-proxy 2>/dev/null || true
+	docker run --rm -d --name llm-proxy -p 127.0.0.1:$(PROXY_PORT):8004 \
+	  --add-host=host.docker.internal:host-gateway \
+	  -e UPSTREAM_BASE_URL -e PROXY_MAX_TOKENS=$(PROXY_MAX_TOKENS) -e PROXY_CHAT_KWARGS \
+	  -v $(HOST_PWD)/s7_guardrails:/s7:ro $(PY_IMG) python /s7/llm_proxy.py --port 8004
+	@echo "UPSTREAM_BASE_URL=$${UPSTREAM_BASE_URL} → :$(PROXY_PORT)。guardrails の OPENAI_BASE_URL をここへ向ける"
+
 guardrails-img:      ## loop15: nemoguardrails/garak 入りイメージをビルド（初回のみ・数分）
 	docker build -t $(GUARD_IMG) $(HOST_PWD)/s7_guardrails
 	@echo "OK: $(GUARD_IMG)（以降の guardrails* ターゲットは pip install 不要）"
@@ -402,4 +412,4 @@ grounded-serve:      ## loop13: sft13配信（vLLM）:8002。要 make grounded-c
 	@echo "起動確認: docker logs -f llm-gen → 'Application startup complete' 後に make rag-eval TAG=sft13"
 
 clean:
-	docker rm -f guardrails mlflow tb dataviewer embed-nim rerank-nim 2>/dev/null || true
+	docker rm -f guardrails llm-proxy mlflow tb dataviewer embed-nim rerank-nim 2>/dev/null || true

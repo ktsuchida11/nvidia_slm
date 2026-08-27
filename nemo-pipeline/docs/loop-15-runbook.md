@@ -81,9 +81,16 @@ make guardrails-dry-rails      # 診断 → スタブLLM → 実nemoguardrails �
 docker logs --tail 3 llm-gen
 
 GEN_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' llm-gen)
-export OPENAI_BASE_URL=http://$GEN_IP:8000/v1 OPENAI_API_KEY=dummy
-make guardrails                      # レール適用エンドポイント :8100
-sleep 60; docker logs --tail 5 guardrails
+
+# 【必須】思考オフのプロキシを挟む。直結すると self-check が長考し、
+# (1)1問に数分かかりタイムアウト (2)思考文中の "yes" を既定パーサが拾い良性まで全ブロック
+export UPSTREAM_BASE_URL=http://$GEN_IP:8000/v1
+make serve-llm-proxy
+PROXY_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' llm-proxy)
+
+export OPENAI_BASE_URL=http://$PROXY_IP:8004/v1 OPENAI_API_KEY=dummy
+docker rm -f guardrails 2>/dev/null; make guardrails
+sleep 20; docker logs --tail 5 guardrails
 
 curl -s http://127.0.0.1:8100/v1/rails/configs      # → [{"id":"config"}] が出れば config_id 解決OK
 # 0.23.0 のリクエスト形: model は必須（欠くと422）、config_id は guardrails.config_id で渡す

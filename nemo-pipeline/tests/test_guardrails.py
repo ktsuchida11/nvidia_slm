@@ -14,6 +14,7 @@ from check_rails import (  # noqa: E402
     extract_reply, load_cases, summarize,
 )
 from diag_rails import discovered_ids  # noqa: E402
+from llm_proxy import inject  # noqa: E402
 from make_garak_cfg import patch_cfg  # noqa: E402
 from render_config import render  # noqa: E402
 from stub_llm import ANSWER, decide  # noqa: E402
@@ -137,6 +138,29 @@ def test_render_expands_env_vars_and_fails_loudly_when_missing():
         assert "MISSING_VAR" in str(e)
     else:
         raise AssertionError("未設定変数は黙って通してはいけない")
+
+
+def test_proxy_injects_thinking_off_and_token_cap():
+    """nemoguardrails は self-check に chat_template_kwargs も max_tokens も渡さない。
+    思考モードのまま長考すると (1)タイムアウト (2)思考文中の "yes" で良性まで全ブロック
+    が同時に起きる（loop15 実機）。通り道で注入して塞ぐ。"""
+    out = inject({"model": "m", "messages": []}, {"enable_thinking": False}, 256)
+    assert out["chat_template_kwargs"] == {"enable_thinking": False}
+    assert out["max_tokens"] == 256
+    # 呼び出し側の指定は尊重する（上書きしない）
+    keep = inject({"max_tokens": 32, "chat_template_kwargs": {"enable_thinking": True}},
+                  {"enable_thinking": False}, 256)
+    assert keep["max_tokens"] == 32 and keep["chat_template_kwargs"]["enable_thinking"] is True
+    src = {"model": "m"}
+    inject(src, {"enable_thinking": False}, 256)
+    assert src == {"model": "m"}                     # 純関数（入力を壊さない）
+
+
+def test_self_check_prompts_demand_a_single_token():
+    """既定パーサ(is_content_safe)は応答に "yes" が含まれるかを見る。思考文が混ざると
+    良性まで yes 判定になるため、プロンプト側でも1語出力を要求しておく。"""
+    text = (S7 / "config" / "config.yml").read_text(encoding="utf-8")
+    assert text.count("yes または no の1語だけ") == 2   # input/output 両方の self-check
 
 
 def test_config_dir_is_discoverable_as_a_config_id():
