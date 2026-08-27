@@ -77,6 +77,17 @@ def main() -> None:
     except Exception as e:                           # noqa: BLE001 — 版により配置が違う
         print(f"  CLI ソースを読めず: {type(e).__name__}: {e}")
 
+    # models[].parameters が生成リクエストのどこへ流れるか。ここが分かれば
+    # chat_template_kwargs（思考モード無効化）を config から渡せるかが確定する
+    print("\n== models[].parameters の流れ（思考モードを切れるか） ==")
+    try:
+        from nemoguardrails.llm.clients import openai_compatible as oc
+        show_source_around(inspect.getsource(oc), "def chat_completion", before=4, after=22)
+        from nemoguardrails.llm.models import openai_chat as ochat
+        show_source_around(inspect.getsource(ochat), "def generate_async", before=4, after=22)
+    except Exception as e:                           # noqa: BLE001
+        print(f"  クライアントのソースを読めず: {type(e).__name__}: {e}")
+
 
 if __name__ == "__main__":
     main()

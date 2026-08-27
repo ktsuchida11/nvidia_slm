@@ -7,6 +7,7 @@
       "headers": { "Content-Type": "application/json" },
       "req_template_json_object": {
         "config_id": "config",
+        "guardrails": { "config_id": "config" },
         "model": "nemotron-gen",
         "messages": [ { "role": "user", "content": "$INPUT" } ]
       },

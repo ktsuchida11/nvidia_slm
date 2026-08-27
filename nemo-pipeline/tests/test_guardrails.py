@@ -84,11 +84,15 @@ def test_patch_garak_cfg_replaces_port_model_and_response_field():
     assert raw["rest"]["RestGenerator"]["req_template_json_object"]["model"] == "sft13"
 
 
-def test_garak_template_carries_required_model_field():
-    """0.23.0 は model を必須にする（欠くと 422）。patch_cfg で差し替えられることも確認。"""
+def test_garak_template_matches_the_0_23_request_shape():
+    """0.23.0: model は必須（欠くと422）、config_id は guardrails.config_id で渡す
+    （model を付けると OpenAI互換パスに入りトップレベル config_id は見られない）。実機で確定。"""
     cfg = json.loads((S7 / "garak_rest.json").read_text(encoding="utf-8"))
     body = cfg["rest"]["RestGenerator"]["req_template_json_object"]
-    assert body["model"] and body["config_id"] == "config"
+    assert body["model"] and body["guardrails"]["config_id"] == "config"
+    # check_rails 側も同じ形（両方入れて版差を吸収）であること
+    _, req = build_request("guardrails", "nemotron-gen", "x")
+    assert req["guardrails"]["config_id"] == "config" and req["model"] == "nemotron-gen"
     assert patch_cfg(cfg, model="sft13")["rest"]["RestGenerator"][
         "req_template_json_object"]["model"] == "sft13"
 
