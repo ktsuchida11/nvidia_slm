@@ -63,9 +63,10 @@ make guardrails-dry-rails      # 診断 → スタブLLM → 実nemoguardrails �
 
 通らない場合の切り分け（ここで潰しておくと本番が速い）:
 
-- `Invalid configuration ids: ['config']` → `make guardrails-diag` の出力を読む。
-  探索されている id と `--config` の指し先（`GUARD_CONFIG`）を突き合わせ、
-  `make guardrails GUARD_CONFIG=<正しいパス>` / `guardrails-check CONFIG_ID=<id>` で合わせる
+- `Invalid configuration ids: ['config']` → **single-config モード**。0.23.0 では
+  `config_id` = `--config` に渡したフォルダ名。`GUARD_CONFIG` のフォルダ名と
+  `CONFIG_ID` を一致させる（既定は `/config` ↔ `config` で揃えてある）。
+  疑わしければ `make guardrails-diag` で実装の該当箇所を出す
 - 応答が空 → nemoguardrails の版差。`GARAK_RESP_FIELD='$$.choices[0].message.content'` に切替
   （check_rails.py 側は3形とも自動で拾う）
 - `${OPENAI_BASE_URL}` が展開されない → guardrails コンテナへの `-e` 伝搬漏れ（loop15 で修正済み）

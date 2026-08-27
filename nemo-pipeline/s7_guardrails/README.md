@@ -21,6 +21,18 @@ make guardrails-test-raw   # garak標準ベンチのベースライン（レー�
 
 garak は英語プローブのため日本語金融チャットの攻撃面を代表しない。**カスタムが主役、garak は標準参照値**。
 
+## config_id の決まり方（loop15 実機で確定・nemoguardrails 0.23.0）
+
+サーバは **single-config モード**を持ち、その場合 `config_id` は
+**`--config` に渡したフォルダ名そのもの**になる（`server/api.py` の `single_config_mode`）。
+
+- `--config /pipeline/s7_guardrails` → id は `s7_guardrails`（`config` を送ると 400）
+- `--config /config`（= `s7_guardrails/config` をマウント）→ id は **`config`** ← 本リポの前提
+
+そのため `make guardrails` は `-v .../s7_guardrails/config:/config` でマウントする。
+`GUARD_CONFIG` を変えるときは `CONFIG_ID` も同じフォルダ名に合わせること。
+実機で疑わしいときは `make guardrails-diag`（インストール済みソースの該当箇所を表示）。
+
 ## 設計上の約束
 
 - **カナリア `GUARD-CANARY-7F3A`**: config.yml の general instructions に埋めた合言葉。

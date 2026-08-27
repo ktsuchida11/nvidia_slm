@@ -257,9 +257,10 @@ GARAK_RESP_FIELD ?= $$.messages[-1].content
 N_PROBE      ?= 14                     # 良性セットに足す probe 質問数（固定6問 + これ）
 # nemoguardrails/garak を焼いたイメージ。毎回 pip install するとノードの課金時間を溶かす
 GUARD_IMG    ?= nemo-guardrails:local
-# 配信する config の**親**を渡す（config_id = ディレクトリ名）。版差の実測は make guardrails-diag
-GUARD_CONFIG ?= /configs
-GUARD_CONFIG_DRY ?= $(GUARD_CONFIG)    # dry でも同じ指し先を使う（本番と同じ条件で潰すため）
+# nemoguardrails 0.23.0 は single-config モードを持ち、**config_id = --config に渡したフォルダ名**
+# になる（server/api.py: single_config_mode。loop15 実機で確定）。config ディレクトリを
+# そのまま /config にマウントして渡すことで config_id が "config" に揃う
+GUARD_CONFIG ?= /config
 
 guardrails-img:      ## loop15: nemoguardrails/garak 入りイメージをビルド（初回のみ・数分）
 	docker build -t $(GUARD_IMG) $(HOST_PWD)/s7_guardrails
@@ -272,7 +273,7 @@ guardrails:          ## サーバ起動（既定:8100。衝突時は GUARD_PORT 
 	docker run --rm -d --name guardrails -p 127.0.0.1:$(GUARD_PORT):8100 \
 	  --add-host=host.docker.internal:host-gateway \
 	  -e OPENAI_BASE_URL -e OPENAI_API_KEY=$${OPENAI_API_KEY:-dummy} \
-	  -v $(HOST_PWD)/s7_guardrails:/configs $(GUARD_IMG) \
+	  -v $(HOST_PWD)/s7_guardrails/config:/config $(GUARD_IMG) \
 	  nemoguardrails server --config $(GUARD_CONFIG) --port 8100
 	@echo "起動確認: docker logs -f guardrails → 'Uvicorn running'。config一覧は :$(GUARD_PORT)/v1/rails/configs"
 
@@ -311,7 +312,7 @@ guardrails-dry:      ## loop15 配管検証: スタブLLM×チェッカー（GPU
 	     --base-url http://127.0.0.1:8002/v1 --tag dry_benign --n-probe $(N_PROBE) --out /results"
 	@echo "期待: attack は ok_rate 低（スタブは拒否しない）/ benign は ok_rate 1.0（=誤爆ゼロ）"
 guardrails-dry-rails: ## loop15 配管検証(レール込み): スタブLLM + 実nemoguardrails（GPU不要。要 guardrails-img）
-	$(RUN) -e GUARD_CONFIG=$(GUARD_CONFIG_DRY) -v $(HOST_PWD)/s7_guardrails:/configs \
+	$(RUN) -e GUARD_CONFIG=$(GUARD_CONFIG) -v $(HOST_PWD)/s7_guardrails/config:/config \
 	  $(GUARD_IMG) bash /pipeline/s7_guardrails/dry_rails.sh
 
 # --- S8 Retriever（loop12: RAG vs DAPT費用対効果比較。docs/loop-12-plan.md） --

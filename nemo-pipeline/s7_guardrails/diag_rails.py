@@ -68,6 +68,15 @@ def main() -> None:
     for m in re.finditer(r"^\s*(app\.rails_config_path\s*=.*)$", src, re.M):
         print(f"  config path 設定: {m.group(1).strip()}")
 
+    # 0.23.0 は single-config モードを持ち、その場合 config_id = --config のフォルダ名になる。
+    # 判定条件がどこで決まるかを CLI 側から確認する（config_id をどう渡すかが決まる）
+    print("\n== single-config モードの判定（config_id の決まり方） ==")
+    try:
+        from nemoguardrails import cli
+        show_source_around(inspect.getsource(cli), "single_config_mode", before=10, after=8)
+    except Exception as e:                           # noqa: BLE001 — 版により配置が違う
+        print(f"  CLI ソースを読めず: {type(e).__name__}: {e}")
+
 
 if __name__ == "__main__":
     main()
