@@ -49,18 +49,23 @@ DevContainer は PyPI へ到達できないため nemoguardrails を含む検証
 docker rm -f llm-gen 2>/dev/null; make grounded-serve GPU='--gpus device=0'
 
 # 別ターミナル（vLLMのロード待ちの間に。スタブLLM相手なのでGPU不要）
+make guardrails-img            # 初回のみ。nemoguardrails/garak を焼いたイメージを作る（数分）
 make guardrails-dry            # ハーネスのみ・数秒。attack ok_rate低 / benign 1.0 が正常
-make guardrails-dry-rails      # 実nemoguardrails + スタブLLM・数分。config読込と config_id 解決の確認
+make guardrails-dry-rails      # 診断 → スタブLLM → 実nemoguardrails → 攻撃セット
 ```
 
-`guardrails-dry-rails` は nemoguardrails の pip install（数分）から始まり、
-スタブ起動 → サーバ起動 → 攻撃セットの順に進む（`s7_guardrails/dry_rails.sh`）。
-`/v1/rails/configs` の本文が表示されるので、**そこに `config` が出れば config_id 解決OK**。
+**毎回 pip install しないこと**: `guardrails-img` を一度ビルドすれば以降は即起動する。
+切り分けで再実行を繰り返すとき、pip の数分がそのまま課金時間になる（loop15 実機で顕在化）。
+
+`guardrails-dry-rails` は先頭で `diag_rails.py` を走らせ、**この版の config 探索仕様を
+インストール済みソースから直接表示する**（`s7_guardrails/dry_rails.sh`）。
+続いて `/v1/rails/configs` の本文が出るので、**そこに `config` が並べば config_id 解決OK**。
 
 通らない場合の切り分け（ここで潰しておくと本番が速い）:
 
-- `config_id` が見つからない → `--config` はサブディレクトリ群を指す。`/pipeline/s7_guardrails`
-  を渡し、その中の `config/` が id になる（loop15 で mount を config → s7_guardrails へ変更済み）
+- `Invalid configuration ids: ['config']` → `make guardrails-diag` の出力を読む。
+  探索されている id と `--config` の指し先（`GUARD_CONFIG`）を突き合わせ、
+  `make guardrails GUARD_CONFIG=<正しいパス>` / `guardrails-check CONFIG_ID=<id>` で合わせる
 - 応答が空 → nemoguardrails の版差。`GARAK_RESP_FIELD='$$.choices[0].message.content'` に切替
   （check_rails.py 側は3形とも自動で拾う）
 - `${OPENAI_BASE_URL}` が展開されない → guardrails コンテナへの `-e` 伝搬漏れ（loop15 で修正済み）
