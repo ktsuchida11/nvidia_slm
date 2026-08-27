@@ -260,21 +260,22 @@ guardrails:          ## サーバ起動（既定:8100。衝突時は GUARD_PORT 
 	  --add-host=host.docker.internal:host-gateway \
 	  -e OPENAI_BASE_URL -e OPENAI_API_KEY=$${OPENAI_API_KEY:-dummy} \
 	  -v $(HOST_PWD)/s7_guardrails:/configs $(PY_IMG) bash -lc \
-	  "(pip -q install nemoguardrails[all] 2>/dev/null || true) && nemoguardrails server --config /configs --port 8100"
-	@echo "起動確認: docker logs -f guardrails → 'Uvicorn running'（config_id=config で :$(GUARD_PORT) へPOST）"
+	  "set -e; pip -q install 'nemoguardrails[all]'; nemoguardrails server --config /configs --port 8100"
+	@echo "起動確認: docker logs -f guardrails → pip(数分) の後 'Uvicorn running'（config_id=config で :$(GUARD_PORT) へPOST）"
 
 guardrails-test:     ## B2: garak標準ベンチ（レールあり :8100）+ 公式evaluate
 	$(RUN) $(PY_IMG) bash -lc \
-	  "(pip -q install nemoguardrails[all] garak 2>/dev/null || true) && \
+	  "set -e; pip -q install 'nemoguardrails[all]' garak; \
 	   python /pipeline/s7_guardrails/make_garak_cfg.py --template /pipeline/s7_guardrails/garak_rest.json \
 	     --out /tmp/garak_rest.json --port $(GUARD_PORT) --model $(GUARD_MODEL) \
 	     --resp-field '$(GARAK_RESP_FIELD)' && \
-	   nemoguardrails evaluate moderation --config /pipeline/s7_guardrails/config; \
+	   nemoguardrails evaluate moderation --config /pipeline/s7_guardrails/config \
+	     || echo '[warn] evaluate は参考値。失敗しても garak は続行する'; \
 	   python -m garak --model_type rest --generator_option_file /tmp/garak_rest.json \
 	     --probes $(GARAK_PROBES) --generations $(GARAK_GENS) --report_prefix /results/garak_rails"
 guardrails-test-raw: ## B1: garak標準ベンチのベースライン（レールなし・vLLM直 :8002）
 	$(RUN) -e OPENAI_API_KEY $(PY_IMG) bash -lc \
-	  "(pip -q install garak 2>/dev/null || true) && \
+	  "set -e; pip -q install garak; \
 	   python /pipeline/s7_guardrails/make_garak_cfg.py --template /pipeline/s7_guardrails/garak_rest_raw.json \
 	     --out /tmp/garak_rest_raw.json --model $(GUARD_MODEL) && \
 	   python -m garak --model_type rest --generator_option_file /tmp/garak_rest_raw.json \
@@ -289,21 +290,15 @@ guardrails-check:    ## B3/B4: 日本語カスタム攻撃・良性チェック�
 
 guardrails-dry:      ## loop15 配管検証: スタブLLM×チェッカー（GPU/API不要・数秒）
 	$(RUN) $(PY_IMG) bash -lc \
-	  "python /pipeline/s7_guardrails/stub_llm.py --port 8002 & sleep 2 && \
+	  "set -e; python /pipeline/s7_guardrails/stub_llm.py --port 8002 & \
+	   python /pipeline/s7_guardrails/wait_http.py http://127.0.0.1:8002/v1/models --timeout 60; \
 	   python /pipeline/s7_guardrails/check_rails.py --api openai --set attack \
 	     --base-url http://127.0.0.1:8002/v1 --tag dry_attack --out /results && \
 	   python /pipeline/s7_guardrails/check_rails.py --api openai --set benign \
 	     --base-url http://127.0.0.1:8002/v1 --tag dry_benign --n-probe $(N_PROBE) --out /results"
 	@echo "期待: attack は ok_rate 低（スタブは拒否しない）/ benign は ok_rate 1.0（=誤爆ゼロ）"
 guardrails-dry-rails: ## loop15 配管検証(レール込み): スタブLLM + 実nemoguardrails（数分・GPU不要）
-	$(RUN) $(PY_IMG) bash -lc \
-	  "(pip -q install nemoguardrails[all] 2>/dev/null || true) && \
-	   python /pipeline/s7_guardrails/stub_llm.py --port 8002 & sleep 2 && \
-	   OPENAI_BASE_URL=http://127.0.0.1:8002/v1 OPENAI_API_KEY=dummy \
-	     nemoguardrails server --config /pipeline/s7_guardrails --port 8100 & \
-	   for i in \$$(seq 1 60); do curl -sf http://127.0.0.1:8100/v1/rails/configs >/dev/null && break; sleep 2; done; \
-	   python /pipeline/s7_guardrails/check_rails.py --api guardrails --set attack \
-	     --base-url http://127.0.0.1:8100 --tag dry_rails --out /results"
+	$(RUN) $(PY_IMG) bash /pipeline/s7_guardrails/dry_rails.sh
 
 # --- S8 Retriever（loop12: RAG vs DAPT費用対効果比較。docs/loop-12-plan.md） --
 EMBED_PORT ?= 8001
