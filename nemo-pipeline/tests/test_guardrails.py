@@ -14,6 +14,7 @@ from check_rails import (  # noqa: E402
     extract_reply, load_cases, summarize,
 )
 from diag_rails import discovered_ids  # noqa: E402
+from inspect_garak import summarize_attempts  # noqa: E402
 from llm_proxy import inject  # noqa: E402
 from make_garak_cfg import patch_cfg  # noqa: E402
 from render_config import render  # noqa: E402
@@ -138,6 +139,18 @@ def test_render_expands_env_vars_and_fails_loudly_when_missing():
         assert "MISSING_VAR" in str(e)
     else:
         raise AssertionError("未設定変数は黙って通してはいけない")
+
+
+def test_garak_report_inspection_flags_empty_outputs():
+    """garak は空応答を「攻撃失敗＝防御成功」と数える。response_json_field を誤ると
+    偽の完璧な防御率が静かに出るため、走らせた後に空率を必ず見る。"""
+    rows = [{"entry_type": "attempt", "outputs": ["本アシスタントは…", ""]},
+            {"entry_type": "attempt", "outputs": [None]},
+            {"entry_type": "start_run setup"}]
+    s = summarize_attempts(rows)
+    assert s["n_outputs"] == 3 and s["empty"] == 2 and s["empty_rate"] == 0.6667
+    assert s["samples"] == ["本アシスタントは…"]
+    assert summarize_attempts([])["empty_rate"] is None      # 空でも落ちない
 
 
 def test_proxy_injects_thinking_off_and_token_cap():

@@ -32,7 +32,7 @@ MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 # データビューア用ポート（衝突時は hostpath.mk で上書き）
 VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill dapt-prep probe-gen probe-eval relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-img guardrails-diag serve-llm-proxy guardrails-test guardrails-test-raw guardrails-check guardrails-dry guardrails-dry-rails serve-embed retriever-index retriever-index-dry retriever-recall retriever-recall-dry rag-eval rag-eval-dry serve-rerank rag-rerank-dry tracking tensorboard viewer clean
+.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill dapt-prep probe-gen probe-eval relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-img guardrails-diag garak-inspect serve-llm-proxy guardrails-test guardrails-test-raw guardrails-check guardrails-dry guardrails-dry-rails serve-embed retriever-index retriever-index-dry retriever-recall retriever-recall-dry rag-eval rag-eval-dry serve-rerank rag-rerank-dry tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -278,6 +278,10 @@ guardrails-img:      ## loop15: nemoguardrails/garak 入りイメージをビル
 	docker build -t $(GUARD_IMG) $(HOST_PWD)/s7_guardrails
 	@echo "OK: $(GUARD_IMG)（以降の guardrails* ターゲットは pip install 不要）"
 
+garak-inspect:       ## loop15: garakレポートの出力が空でないか確認（REPORT=path）
+	$(RUN) $(PY_IMG) python /pipeline/s7_guardrails/inspect_garak.py \
+	  $(or $(REPORT),/results/garak_rails.report.jsonl)
+
 guardrails-diag:     ## loop15: config探索の実機診断（Invalid configuration ids を踏んだとき）
 	$(RUN) $(GUARD_IMG) python /pipeline/s7_guardrails/diag_rails.py $(or $(DIAG_PATH),/pipeline/s7_guardrails)
 
@@ -295,8 +299,8 @@ guardrails-test:     ## B2: garak標準ベンチ（レールあり :8100）+ 公
 	     --out /tmp/garak_rest.json --port $(GARAK_GUARD_PORT) --model $(GUARD_MODEL) \
 	     $(if $(GUARD_HOST),--host $(GUARD_HOST)) \
 	     --resp-field '$(GARAK_RESP_FIELD)' && \
-	   nemoguardrails evaluate moderation --config /pipeline/s7_guardrails/config \
-	     || echo '[warn] evaluate は参考値。失敗しても garak は続行する'; \
+	   nemoguardrails eval moderation --config /pipeline/s7_guardrails/config \
+	     || echo '[warn] eval は参考値（0.23.0でサブコマンド名が evaluate→eval に変更）。garak は続行する'; \
 	   python -m garak --model_type rest --generator_option_file /tmp/garak_rest.json \
 	     --probes $(GARAK_PROBES) --generations $(GARAK_GENS) --report_prefix /results/garak_rails"
 guardrails-test-raw: ## B1: garak標準ベンチのベースライン（レールなし・vLLM直 :8002）
