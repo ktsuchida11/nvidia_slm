@@ -32,7 +32,7 @@ MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 # データビューア用ポート（衝突時は hostpath.mk で上書き）
 VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill dapt-prep probe-gen probe-eval relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-test serve-embed retriever-index retriever-index-dry retriever-recall retriever-recall-dry rag-eval rag-eval-dry serve-rerank rag-rerank-dry tracking tensorboard viewer clean
+.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill dapt-prep probe-gen probe-eval relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-test guardrails-test-raw guardrails-check guardrails-dry guardrails-dry-rails serve-embed retriever-index retriever-index-dry retriever-recall retriever-recall-dry rag-eval rag-eval-dry serve-rerank rag-rerank-dry tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -246,19 +246,64 @@ eval-finqa-dry:      ## S6 finqa配管検証（エンドポイント不要）
 	$(RUN) $(PY_IMG) bash -lc "(pip -q install pyyaml 2>/dev/null || true) && \
 	  python /pipeline/s6_evaluation/s6_eval.py --config /pipeline/s6_evaluation/eval_finqa.yaml --mode dry --tag finqa_dry"
 
-# --- S7 ガードレール ----------------------------------------------------------
-GUARD_PORT ?= 8100
+# --- S7 ガードレール（loop15 実機検証。docs/loop-15-plan.md） -----------------
+GUARD_PORT   ?= 8100
+GUARD_MODEL  ?= nemotron-gen           # vLLM の --served-model-name と config.yml に一致させる
+GARAK_PROBES ?= promptinject,dan,encoding   # OWASP LLM01 系の標準ベンチ（英語）
+GARAK_GENS   ?= 1                      # 生成回数。既定の複数生成はGPU時間に直結するため1に絞る
+# nemoguardrails の応答は版により messages[] / OpenAI互換 choices[] のどちらもありうる。
+# スモークで空文字が返るなら GARAK_RESP_FIELD='$$.choices[0].message.content' に切り替える
+GARAK_RESP_FIELD ?= $$.messages[-1].content
+N_PROBE      ?= 14                     # 良性セットに足す probe 質問数（固定6問 + これ）
 guardrails:          ## サーバ起動（既定:8100。衝突時は GUARD_PORT で変更）
 	docker run --rm -d --name guardrails -p 127.0.0.1:$(GUARD_PORT):8100 \
-	  -v $(HOST_PWD)/s7_guardrails/config:/config $(PY_IMG) bash -lc \
-	  "(pip -q install nemoguardrails[all] 2>/dev/null || true) && nemoguardrails server --config /config --port 8100"
-guardrails-test:     ## 検証（公式evaluate + garak攻撃。GUARD_PORTをgarak設定に反映）
-	$(RUN) --add-host=host.docker.internal:host-gateway $(PY_IMG) bash -lc \
+	  --add-host=host.docker.internal:host-gateway \
+	  -e OPENAI_BASE_URL -e OPENAI_API_KEY=$${OPENAI_API_KEY:-dummy} \
+	  -v $(HOST_PWD)/s7_guardrails:/configs $(PY_IMG) bash -lc \
+	  "(pip -q install nemoguardrails[all] 2>/dev/null || true) && nemoguardrails server --config /configs --port 8100"
+	@echo "起動確認: docker logs -f guardrails → 'Uvicorn running'（config_id=config で :$(GUARD_PORT) へPOST）"
+
+guardrails-test:     ## B2: garak標準ベンチ（レールあり :8100）+ 公式evaluate
+	$(RUN) $(PY_IMG) bash -lc \
 	  "(pip -q install nemoguardrails[all] garak 2>/dev/null || true) && \
-	   sed 's/:8100/:$(GUARD_PORT)/' /pipeline/s7_guardrails/garak_rest.json > /tmp/garak_rest.json && \
-	   nemoguardrails evaluate moderation --config /pipeline/s7_guardrails/config && \
+	   python /pipeline/s7_guardrails/make_garak_cfg.py --template /pipeline/s7_guardrails/garak_rest.json \
+	     --out /tmp/garak_rest.json --port $(GUARD_PORT) --model $(GUARD_MODEL) \
+	     --resp-field '$(GARAK_RESP_FIELD)' && \
+	   nemoguardrails evaluate moderation --config /pipeline/s7_guardrails/config; \
 	   python -m garak --model_type rest --generator_option_file /tmp/garak_rest.json \
-	     --probes promptinject --report_prefix /results/garak"
+	     --probes $(GARAK_PROBES) --generations $(GARAK_GENS) --report_prefix /results/garak_rails"
+guardrails-test-raw: ## B1: garak標準ベンチのベースライン（レールなし・vLLM直 :8002）
+	$(RUN) -e OPENAI_API_KEY $(PY_IMG) bash -lc \
+	  "(pip -q install garak 2>/dev/null || true) && \
+	   python /pipeline/s7_guardrails/make_garak_cfg.py --template /pipeline/s7_guardrails/garak_rest_raw.json \
+	     --out /tmp/garak_rest_raw.json --model $(GUARD_MODEL) && \
+	   python -m garak --model_type rest --generator_option_file /tmp/garak_rest_raw.json \
+	     --probes $(GARAK_PROBES) --generations $(GARAK_GENS) --report_prefix /results/garak_raw"
+
+guardrails-check:    ## B3/B4: 日本語カスタム攻撃・良性チェック（SET=attack|benign, API=guardrails|openai）
+	$(RUN) -e OPENAI_API_KEY -e GUARD_MODEL=$(GUARD_MODEL) \
+	  -e GUARD_BASE_URL=$${GUARD_BASE_URL:-http://host.docker.internal:$(GUARD_PORT)} -e OPENAI_BASE_URL \
+	  $(PY_IMG) python /pipeline/s7_guardrails/check_rails.py \
+	    --api $(or $(API),guardrails) --set $(or $(SET),attack) --n-probe $(N_PROBE) \
+	    --tag $(or $(TAG),rails)
+
+guardrails-dry:      ## loop15 配管検証: スタブLLM×チェッカー（GPU/API不要・数秒）
+	$(RUN) $(PY_IMG) bash -lc \
+	  "python /pipeline/s7_guardrails/stub_llm.py --port 8002 & sleep 2 && \
+	   python /pipeline/s7_guardrails/check_rails.py --api openai --set attack \
+	     --base-url http://127.0.0.1:8002/v1 --tag dry_attack --out /results && \
+	   python /pipeline/s7_guardrails/check_rails.py --api openai --set benign \
+	     --base-url http://127.0.0.1:8002/v1 --tag dry_benign --n-probe $(N_PROBE) --out /results"
+	@echo "期待: attack は ok_rate 低（スタブは拒否しない）/ benign は ok_rate 1.0（=誤爆ゼロ）"
+guardrails-dry-rails: ## loop15 配管検証(レール込み): スタブLLM + 実nemoguardrails（数分・GPU不要）
+	$(RUN) $(PY_IMG) bash -lc \
+	  "(pip -q install nemoguardrails[all] 2>/dev/null || true) && \
+	   python /pipeline/s7_guardrails/stub_llm.py --port 8002 & sleep 2 && \
+	   OPENAI_BASE_URL=http://127.0.0.1:8002/v1 OPENAI_API_KEY=dummy \
+	     nemoguardrails server --config /pipeline/s7_guardrails --port 8100 & \
+	   for i in \$$(seq 1 60); do curl -sf http://127.0.0.1:8100/v1/rails/configs >/dev/null && break; sleep 2; done; \
+	   python /pipeline/s7_guardrails/check_rails.py --api guardrails --set attack \
+	     --base-url http://127.0.0.1:8100 --tag dry_rails --out /results"
 
 # --- S8 Retriever（loop12: RAG vs DAPT費用対効果比較。docs/loop-12-plan.md） --
 EMBED_PORT ?= 8001
