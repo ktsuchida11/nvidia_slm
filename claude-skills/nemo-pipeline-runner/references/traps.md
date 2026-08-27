@@ -42,6 +42,7 @@
 | NIM が起動直後に死ぬ: manifest「Permission denied (os error 13)」 | `~/.cache/nim` を docker が root 所有で自動作成 ↔ NIM は非root(uid 1000) | `sudo chown -R 1000:1000 ~/.cache/nim`。`--rm` だとログごと消える→フォアグラウンド再現が早い |
 | NIM 稼働中に vLLM が「Free memory < utilization 0.92」で**全GPU**起動不能 | `--gpus all` の NIM は Triton CUDA pool を全GPUに ~4GB ずつ確保 | 同居時は**両サービスとも** `make serve-* GPU='--gpus device=N'` で別GPUにピン留め |
 | tmux 内で埋め込みAPIに「Name or service not known」 | `tmux new` は新シェル → 外で取った `EMB_IP` が空になり URL のホスト名が消える | ブリッジIP取得は tmux セッション内でやり直す |
+| NIM コンテナが起動直後に「静かに」消える（`docker logs` も不能） | シェルの `NGC_API_KEY` が空のまま `-e NGC_API_KEY` で渡り、初回モデル取得に失敗して即死 → `--rm` が痕跡ごと削除。イメージ pull は旧ログインキャッシュで通るため気づきにくい（`docker login` の「password is empty」が唯一の兆候） | 起動前に `echo ${NGC_API_KEY:+OK}` を確認。初回はフォアグラウンド起動で失敗を見える化（loop14） |
 
 ## TP=2 での LoRA SFT（loop13 — seq4096が必要になったら読む）
 
