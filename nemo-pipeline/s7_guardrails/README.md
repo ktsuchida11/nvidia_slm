@@ -39,6 +39,22 @@ garak は英語プローブのため日本語金融チャットの攻撃面を�
 `render_config.py` で描画してから渡す。未設定の変数は既定値が無ければエラーで止める
 （壊れた URL を黙って渡さないため）。
 
+## 思考モードは必ず切る（loop15 実機で確定・最重要）
+
+nemoguardrails は self-check の LLM 呼び出しに `chat_template_kwargs` も `max_tokens` も
+渡さない。Nemotron は既定で思考モードに入るため、**2つの障害が同時に**起きる:
+
+1. 1問 = LLM 3回 × 長考 → 180秒でもタイムアウト
+2. 長い思考文に "yes" が紛れ、既定の出力パーサ（`is_content_safe`）が拾って
+   **良性の質問まで全部ブロック**する（実機で B01「売上高はいくら」まで拒否された）
+
+対策は `make serve-llm-proxy`（`llm_proxy.py`）を挟むこと。通り道で
+`chat_template_kwargs={"enable_thinking": false}` と `max_tokens` を注入するので、
+nemoguardrails の版や config の書き方に依存しない。
+プロンプト側でも「yes または no の1語だけ」を要求してある（二重の保険）。
+
+これは loop8 以来の「**学習と評価で思考設定を揃える**」原則をレールにも適用したもの。
+
 ## 内部エラーは「攻撃成功」ではない（loop15 実機で確定）
 
 レールは LLM 呼び出しが落ちても **HTTP 200** で定型のエラー文を返す。素朴に判定すると
