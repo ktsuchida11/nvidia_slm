@@ -27,6 +27,19 @@ grep -c guardrails-check Makefile     # 1以上 = loop15コードが届いてい
 ls s7_guardrails/{attacks.jsonl,check_rails.py,stub_llm.py,garak_rest_raw.json}
 ```
 
+## ②b ループ中に修正PRがマージされたら（コードの再同期）
+
+ノードは git remote を持たず **S3 経由**で配布する（`git pull` は使えない）。
+配信中のコンテナを触らずリポジトリだけ入れ替える:
+
+```bash
+# Mac 側（マージ後・素のシェルで）
+cd <repoルート> && bash nemo-pipeline/remote/push-to-s3.sh --with-repo
+
+# ノード側（swap/data/mlflow は触らない軽量同期。引数は Makefile 内の到達確認パターン）
+bash /opt/nvidia_slm/nvidia_slm/nemo-pipeline/remote/sync-repo.sh guardrails-dry-rails
+```
+
 ## ③ ノード: vLLM 起動（sft13 :8002）と、待ち時間にレール配管検証
 
 vLLM のロード（~10分）と並行して、**GPU を使わない**レール配管検証を回す。
