@@ -303,7 +303,8 @@ guardrails-check:    ## B3/B4: 日本語カスタム攻撃・良性チェック�
 	  -e GUARD_BASE_URL=$${GUARD_BASE_URL:-http://host.docker.internal:$(GUARD_PORT)} -e OPENAI_BASE_URL \
 	  $(PY_IMG) python /pipeline/s7_guardrails/check_rails.py \
 	    --api $(or $(API),guardrails) --set $(or $(SET),attack) --n-probe $(N_PROBE) \
-	    --config-id $(or $(CONFIG_ID),config) --tag $(or $(TAG),rails)
+	    --config-id $(or $(CONFIG_ID),config) --tag $(or $(TAG),rails) \
+	    --timeout $(or $(CHECK_TIMEOUT),300)
 
 guardrails-dry:      ## loop15 配管検証: スタブLLM×チェッカー（GPU/API不要・数秒）
 	$(RUN) $(PY_IMG) bash -lc \

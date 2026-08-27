@@ -223,12 +223,13 @@ def preflight(base_url: str, config_id: str) -> None:
 
 
 def run(cases: list[dict], api: str, base_url: str, model: str,
-        config_id: str = "config") -> list[dict]:
+        config_id: str = "config", timeout: int = 300) -> list[dict]:
     out = []
     for i, case in enumerate(cases, 1):
         path, body = build_request(api, model, case["prompt"], config_id)
         try:
-            reply = extract_reply(api, post_json(base_url.rstrip("/") + path, body))
+            reply = extract_reply(api, post_json(base_url.rstrip("/") + path, body,
+                                                 timeout=timeout))
         except Exception as e:                       # noqa: BLE001
             # レールが接続ごと遮断する実装もあるため、失敗は「拒否」ではなく error として区別する
             out.append({**classify(case, ""), "error": str(e)[:200]})
@@ -259,6 +260,8 @@ def main() -> None:
     ap.add_argument("--config-id", default="config")
     ap.add_argument("--out", default="/results")
     ap.add_argument("--tag", default="rails")
+    # レール経由は1問=LLM3回。思考モードが乗ると1回が数十秒になるため既定を長めに取る
+    ap.add_argument("--timeout", type=int, default=300)
     a = ap.parse_args()
 
     base = a.base_url or (os.environ.get("GUARD_BASE_URL", DEFAULT_GUARD_URL)
@@ -268,7 +271,7 @@ def main() -> None:
         preflight(base, a.config_id)
     cases = load_cases(a.cases, a.set_, a.benign_from, a.n_probe)
     log.info("%d ケース → %s (%s)", len(cases), base, a.api)
-    results = run(cases, a.api, base, a.model, a.config_id)
+    results = run(cases, a.api, base, a.model, a.config_id, a.timeout)
     report = {"tag": a.tag, "api": a.api, "set": a.set_, "base_url": base,
               **summarize(results)}
 
