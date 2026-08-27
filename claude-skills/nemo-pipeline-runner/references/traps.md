@@ -44,6 +44,21 @@
 | tmux 内で埋め込みAPIに「Name or service not known」 | `tmux new` は新シェル → 外で取った `EMB_IP` が空になり URL のホスト名が消える | ブリッジIP取得は tmux セッション内でやり直す |
 | NIM コンテナが起動直後に「静かに」消える（`docker logs` も不能） | シェルの `NGC_API_KEY` が空のまま `-e NGC_API_KEY` で渡り、初回モデル取得に失敗して即死 → `--rm` が痕跡ごと削除。イメージ pull は旧ログインキャッシュで通るため気づきにくい（`docker login` の「password is empty」が唯一の兆候） | 起動前に `echo ${NGC_API_KEY:+OK}` を確認。初回はフォアグラウンド起動で失敗を見える化（loop14） |
 
+## NeMo Guardrails 0.23.0 / garak（loop15）
+
+**公式ドキュメントと実装が食い違う箇所が複数ある。疑わしければインストール済みソースを読む**
+（`make guardrails-diag` が該当箇所を表示する道具）。
+
+| 症状 | 原因 | 対処 |
+|---|---|---|
+| **良性の質問まで全部ブロックされる**（＋1問が数分でタイムアウト） | nemoguardrails は self-check の LLM 呼び出しに `chat_template_kwargs` も `max_tokens` も渡さない。思考モードの長い出力に "yes" が紛れ、既定パーサ `is_content_safe` が拾う | **`make serve-llm-proxy`（llm_proxy.py）を通り道に挟んで思考オフ+max_tokensを注入**。config/版に依存しない。loop8 の「学習と評価で思考設定を揃える」の適用 |
+| `Invalid configuration ids: ['config']` | **single_config_mode**: config_id は `--config` に渡したフォルダ名そのもの（docs の「サブディレクトリ群」は multi 時のみ） | config ディレクトリを `/config` 等にマウントして直接渡す。id はそのフォルダ名 |
+| `endpoint=${OPENAI_BASE_URL}` のまま呼ばれる | yaml 内の環境変数を展開しない | `render_config.py` で起動前に自前描画（未設定は既定値なしならエラーで停止） |
+| 422 `body.model Field required` / `No guardrails config_id provided` | `model` 必須。かつ model を付けると OpenAI 互換パスに入り config_id は **`guardrails.config_id`（ネスト）**でしか見られない | 両方入れて版差を吸収する |
+| garak が `SKIP ok on 0/0`、または**不自然に高い防御率** | 応答は `choices[]` なのに `response_json_field` が `messages[-1]` のまま → 空文字を採点。**空応答は「攻撃失敗＝防御成功」と数えられ偽の満点が静かに出る** | 既定を `$.choices[0].message.content` に。走行後に **`make garak-inspect`** で空率とサンプルを必ず確認 |
+| 防御率が実際より低く出る | レールは LLM 呼び出しが落ちても **HTTP 200 で定型エラー文**を返す → 「拒否されなかった＝攻撃成功」に誤計上 | `errored` として隔離。`errored > 0` の結果は採用しない |
+| `nemoguardrails evaluate moderation` が動かない | 0.23.0 で `evaluate`→`eval` に改名、`moderation` サブコマンドも無い | 参考値なので既定から外す（`WITH_EVAL=<sub>` 指定時のみ実行） |
+
 ## TP=2 での LoRA SFT（loop13 — seq4096が必要になったら読む）
 
 | 症状 | 原因 | 対処 |
