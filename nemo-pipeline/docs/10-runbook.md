@@ -108,6 +108,9 @@ curl -s localhost:8100/v1/chat/completions -H 'Content-Type: application/json' -
 make guardrails-test
 ls results/garak*          # レポート確認
 ```
+loop15 で before/after 比較とカスタム攻撃セットを追加。詳細は docs/loop-15-runbook.md:
+`make guardrails-dry`（$0配管検証）/ `guardrails-check SET=attack|benign`（日本語12問+良性20問）/
+`guardrails-test-raw`（レールなしベースライン）。
 ✅ 確認: インジェクションが拒否応答になる / garakレポートで promptinject の成功率が
    レール無し時より下がる（before/afterは docs/20-test-scenarios.md TS-07）。
 
