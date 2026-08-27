@@ -107,9 +107,9 @@ augment:             ## S2 的絞りデータ増強（不足パターンをtrain
 eval-augment:        ## S2 評価専用セット増強（heldout_ext.jsonlへ追記・学習不使用。N_EVAL=40。要ANTHROPIC_API_KEY）
 	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
 	  python /pipeline/s2_distillation/s2_distill.py --in /data/curated --out /data/distilled --eval-augment $(or $(N_EVAL),40)"
-distill-dry:         ## S2 配管検証（API不要・数秒）
+distill-dry:         ## S2 配管検証（API不要・数秒）。出力は /data/distilled_dry（実データを壊さない）
 	$(RUN) $(PY_IMG) python /pipeline/s2_distillation/s2_distill.py \
-	  --in /data/curated --out /data/distilled --dry-run \
+	  --in /data/curated --out $(or $(DRY_OUT),/data/distilled_dry) --dry-run \
 	  --gen-chunks $(or $(GEN_CHUNKS),2) --chunk-chars $(or $(CHUNK_CHARS),700)
 
 # --- ループ9: 金融QA(finqa)データ構築。先に make fetch REPO=... FIELDS=user,assistant ---
@@ -121,9 +121,9 @@ finqa-build:         ## S2 finqa SFT/GRPO/heldout構築（教師verifyで数値�
 	$(RUN) -e ANTHROPIC_API_KEY -e ANTHROPIC_BASE_URL -e TEACHER_MODEL $(PY_IMG) bash -lc "(pip -q install anthropic 2>/dev/null || true) && \
 	  python /pipeline/s2_distillation/s2_finqa.py --src /data/raw --out /data/finqa --build \
 	  --n-sft $(or $(N_SFT),10000) --n-grpo $(or $(N_GRPO),2500) --n-heldout $(or $(N_HELDOUT),300) --n-fmt $(or $(N_FMT),1500)"
-finqa-dry:           ## S2 finqa配管検証（API不要・数秒）
+finqa-dry:           ## S2 finqa配管検証（API不要・数秒）。出力は /data/finqa_dry（実データを壊さない）
 	$(RUN) $(PY_IMG) python /pipeline/s2_distillation/s2_finqa.py \
-	  --src /data/raw --out /data/finqa --filter --build --dry-run
+	  --src /data/raw --out $(or $(DRY_OUT),/data/finqa_dry) --filter --build --dry-run
 
 # --- 実験トラッキング（クローズド網: 自前MLflow。外部送信なし） ----------------
 build-tools:         ## 閉域準備: 依存焼き込みツールイメージをbuild（オンライン環境で一度実行）
@@ -366,7 +366,8 @@ rag-eval:            ## loop12 評価②: base+RAG probe評価（要 配信中�
 	     --rag-k $(or $(RAG_K),5) $(if $(RERANK),--rerank --rerank-k0 $(or $(RERANK_K0),50)) --tag $(TAG)"
 rag-eval-dry:        ## loop12 配管検証: RAG評価の配管（配信・API不要。検索は実行・生成はgoldモック=正答率1.0が正常）
 	$(RUN) -e EMBED_BACKEND=dummy $(PY_IMG) bash -lc "(pip -q install numpy 2>/dev/null || true) && \
-	  python /pipeline/s6_evaluation/probe_qa.py --eval --rag --dry-run --index /data/retriever_dry --tag rag_dry"
+	  python /pipeline/s6_evaluation/probe_qa.py --eval --rag --dry-run --index /data/retriever_dry \
+	    --rag-k $(or $(RAG_K),5) --tag rag_dry"
 
 # --- loop14: rerank NIM（検索律速の解消。docs/loop-14-plan.md） ---------------
 RERANK_PORT ?= 8003
@@ -379,8 +380,8 @@ serve-rerank:        ## loop14: rerank NIM 起動 :8003（ノード・要 docker
 rag-rerank-dry:      ## loop14 配管検証: rerank込みRAG評価の配管（$0。dummy埋め込み+dummy rerank・生成goldモック=正答率1.0が正常）
 	$(RUN) -e EMBED_BACKEND=dummy -e RERANK_BACKEND=dummy $(PY_IMG) bash -lc \
 	  "(pip -q install numpy 2>/dev/null || true) && \
-	   python /pipeline/s6_evaluation/probe_qa.py --eval --rag --rerank --rerank-k0 20 --dry-run \
-	     --index /data/retriever_dry --tag rag_rerank_dry"
+	   python /pipeline/s6_evaluation/probe_qa.py --eval --rag --rerank --rerank-k0 $(or $(RERANK_K0),20) \
+	     --rag-k $(or $(RAG_K),5) --dry-run --index /data/retriever_dry --tag rag_rerank_dry"
 
 # --- loop13: grounded QA SFT（読解ミス23ppの回収。docs/loop-13-plan.md） ------
 grounded-seed:       ## loop13: probe-50以外から種文書を決定的サンプル（$0・CPU。N_DOCS=500）

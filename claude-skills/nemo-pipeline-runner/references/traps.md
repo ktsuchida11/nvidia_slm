@@ -77,6 +77,12 @@
 | PII / fuzzy dedup が動かない | GPU専用（deduplication-cuda12 extra） | CPU環境では自前実装で代替（minhash はユニバーサルハッシュ+numpy 化で64倍） |
 | 旧APIのコードが動かない | 1.3.0 は Rayベース新API、旧 nemo_curator.modules は廃止 | Pipeline/Stage API で書く |
 
+## パイプライン運用（発表準備中に検出・2026-08-27）
+
+| 症状 | 原因 | 対処 |
+|---|---|---|
+| **`make distill-dry` が実データを壊す**（train/valid/**heldout** がダミーで上書きされる） | dry と本走が同じ `--out /data/distilled` を指していた。`*-dry` は他段では `_dry` 付きの別ディレクトリに出るのに、S2 の2本（distill/finqa）だけ例外だった | 出力を `/data/distilled_dry` `/data/finqa_dry` に分離（`DRY_OUT` で上書き可）。回帰テスト `tests/test_dry_targets_isolated.py` で「dry が実データの出力先を指していないこと」を機械的に保証。**heldout は不可侵資産なので、復旧は S3 から** |
+
 ## データ・評価設計（loop1/9/10）
 
 | 症状 | 原因 | 対処 |
