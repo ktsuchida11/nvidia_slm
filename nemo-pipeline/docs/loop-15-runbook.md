@@ -69,7 +69,10 @@ make guardrails-dry-rails      # 診断 → スタブLLM → 実nemoguardrails �
   疑わしければ `make guardrails-diag` で実装の該当箇所を出す
 - 応答が空 → nemoguardrails の版差。`GARAK_RESP_FIELD='$$.choices[0].message.content'` に切替
   （check_rails.py 側は3形とも自動で拾う）
-- `${OPENAI_BASE_URL}` が展開されない → guardrails コンテナへの `-e` 伝搬漏れ（loop15 で修正済み）
+- `endpoint=${OPENAI_BASE_URL}` のまま呼ばれる → 0.23.0 は yaml の環境変数を展開しない。
+  `serve_rails.sh` が `render_config.py` で描画してから渡す（loop15 で修正済み）
+- 12問すべて `refused=False` になる → 応答が内部エラーの可能性。`errored` を必ず見る
+  （`errored > 0` の結果は採用しない。レールが LLM に到達できていない）
 
 ## ④ ノード: ゲートA smoke（レール発火の目視 — 出力を Claude に貼る）
 
@@ -92,11 +95,17 @@ curl -s http://127.0.0.1:8100/v1/chat/completions -H 'Content-Type: application/
 
 ## ⑤ ノード: ゲートB 本測定（tmux 内）
 
+**`host.docker.internal` は 127.0.0.1 バインドのポートに届かない**（loop12 の罠）。
+測定用コンテナからは対象コンテナの**ブリッジIP + コンテナ側ポート**で叩く。
+
 ```bash
 tmux new -s gr    # ブリッジIPは必ず tmux セッション内で取り直す（毎回の罠）
-GEN_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' llm-gen)
-export OPENAI_BASE_URL=http://$GEN_IP:8000/v1 OPENAI_API_KEY=dummy
 cd /opt/nvidia_slm/nvidia_slm/nemo-pipeline
+IP() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1"; }
+GEN_IP=$(IP llm-gen); GUARD_IP=$(IP guardrails)
+export OPENAI_BASE_URL=http://$GEN_IP:8000/v1 OPENAI_API_KEY=dummy
+export GUARD_BASE_URL=http://$GUARD_IP:8100
+echo "gen=$GEN_IP guard=$GUARD_IP"     # 両方とも空でないこと
 
 # B3/B4 先（数分・安い。ここで判定値の大勢が見える）
 make guardrails-check SET=attack API=openai     TAG=raw     # レールなし(ベースライン)
@@ -104,9 +113,12 @@ make guardrails-check SET=attack API=guardrails TAG=rails   # レールあり
 make guardrails-check SET=benign API=guardrails TAG=rails   # 良性20問（誤爆の測定）
 
 # B1/B2（garak 標準ベンチ。時間が読めないため -raw を先に10分計測して再見積り）
-make guardrails-test-raw     # レールなし
-make guardrails-test         # レールあり（1問=LLM3呼び出しで約3倍遅い）
+make guardrails-test-raw GEN_HOST=$GEN_IP GEN_PORT=8000      # レールなし
+make guardrails-test     GUARD_HOST=$GUARD_IP                # レールあり（1問=LLM3呼び出しで約3倍遅い）
 ```
+
+各 report は `ok_rate` だけでなく **`errored` を必ず確認**する。`errored > 0` は
+レールが LLM に到達できていない＝測定不能なので、その結果は採用しない。
 
 各 run 完了ごとに report JSON（`ok_rate` / `leaked` / `by_owasp`）を Claude に貼る。
 garak は `results/garak_{raw,rails}*.report.jsonl` の集計行を貼れば足りる。

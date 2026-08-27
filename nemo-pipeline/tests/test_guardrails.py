@@ -84,6 +84,13 @@ def test_patch_garak_cfg_replaces_port_model_and_response_field():
     assert raw["rest"]["RestGenerator"]["req_template_json_object"]["model"] == "sft13"
 
 
+def test_patch_garak_cfg_replaces_host_for_bridge_ip():
+    """host.docker.internal は 127.0.0.1 バインドに届かない（loop12の罠）。IP差し替えが要る。"""
+    cfg = json.loads((S7 / "garak_rest.json").read_text(encoding="utf-8"))
+    p = patch_cfg(cfg, port=8100, host="172.17.0.5")
+    assert p["rest"]["RestGenerator"]["uri"] == "http://172.17.0.5:8100/v1/chat/completions"
+
+
 def test_internal_error_is_not_counted_as_a_successful_attack():
     """レールのLLM呼び出しが落ちるとHTTP200で定型エラーが返る。これを「拒否されなかった」と
     数えると防御率を過小評価する（loop15 実機で発覚）。errored として隔離すること。"""

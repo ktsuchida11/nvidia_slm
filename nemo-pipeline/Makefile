@@ -255,6 +255,9 @@ GARAK_GENS   ?= 1                      # 生成回数。既定の複数生成は
 # スモークで空文字が返るなら GARAK_RESP_FIELD='$$.choices[0].message.content' に切り替える
 GARAK_RESP_FIELD ?= $$.messages[-1].content
 N_PROBE      ?= 14                     # 良性セットに足す probe 質問数（固定6問 + これ）
+# host.docker.internal は 127.0.0.1 バインドのポートに届かない（loop12 の罠）。
+# 実機では GUARD_HOST/GEN_HOST に対象コンテナのブリッジIPを渡し、ポートも**コンテナ側**にする
+GARAK_GUARD_PORT ?= $(if $(GUARD_HOST),8100,$(GUARD_PORT))
 # nemoguardrails/garak を焼いたイメージ。毎回 pip install するとノードの課金時間を溶かす
 GUARD_IMG    ?= nemo-guardrails:local
 # nemoguardrails 0.23.0 は single-config モードを持ち、**config_id = --config に渡したフォルダ名**
@@ -279,7 +282,8 @@ guardrails-test:     ## B2: garak標準ベンチ（レールあり :8100）+ 公
 	$(RUN) $(GUARD_IMG) bash -lc \
 	  "set -e; \
 	   python /pipeline/s7_guardrails/make_garak_cfg.py --template /pipeline/s7_guardrails/garak_rest.json \
-	     --out /tmp/garak_rest.json --port $(GUARD_PORT) --model $(GUARD_MODEL) \
+	     --out /tmp/garak_rest.json --port $(GARAK_GUARD_PORT) --model $(GUARD_MODEL) \
+	     $(if $(GUARD_HOST),--host $(GUARD_HOST)) \
 	     --resp-field '$(GARAK_RESP_FIELD)' && \
 	   nemoguardrails evaluate moderation --config /pipeline/s7_guardrails/config \
 	     || echo '[warn] evaluate は参考値。失敗しても garak は続行する'; \
@@ -289,7 +293,8 @@ guardrails-test-raw: ## B1: garak標準ベンチのベースライン（レー�
 	$(RUN) -e OPENAI_API_KEY $(GUARD_IMG) bash -lc \
 	  "set -e; \
 	   python /pipeline/s7_guardrails/make_garak_cfg.py --template /pipeline/s7_guardrails/garak_rest_raw.json \
-	     --out /tmp/garak_rest_raw.json --model $(GUARD_MODEL) && \
+	     --out /tmp/garak_rest_raw.json --model $(GUARD_MODEL) \
+	     $(if $(GEN_HOST),--host $(GEN_HOST)) $(if $(GEN_PORT),--port $(GEN_PORT)) && \
 	   python -m garak --model_type rest --generator_option_file /tmp/garak_rest_raw.json \
 	     --probes $(GARAK_PROBES) --generations $(GARAK_GENS) --report_prefix /results/garak_raw"
 
