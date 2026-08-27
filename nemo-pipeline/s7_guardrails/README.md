@@ -29,9 +29,22 @@ garak は英語プローブのため日本語金融チャットの攻撃面を�
 - `--config /pipeline/s7_guardrails` → id は `s7_guardrails`（`config` を送ると 400）
 - `--config /config`（= `s7_guardrails/config` をマウント）→ id は **`config`** ← 本リポの前提
 
-そのため `make guardrails` は `-v .../s7_guardrails/config:/config` でマウントする。
-`GUARD_CONFIG` を変えるときは `CONFIG_ID` も同じフォルダ名に合わせること。
+そのため `serve_rails.sh` は描画後の config を `/tmp/rails/config` に置く（= id は `config`）。
 実機で疑わしいときは `make guardrails-diag`（インストール済みソースの該当箇所を表示）。
+
+## 環境変数は自前で描画する（loop15 実機で確定）
+
+0.23.0 は config.yml 内の `${OPENAI_BASE_URL}` を**展開しない**。文字列のまま
+エンドポイントに使われ `UnsupportedProtocol` で落ちる。`serve_rails.sh` が起動前に
+`render_config.py` で描画してから渡す。未設定の変数は既定値が無ければエラーで止める
+（壊れた URL を黙って渡さないため）。
+
+## 内部エラーは「攻撃成功」ではない（loop15 実機で確定）
+
+レールは LLM 呼び出しが落ちても **HTTP 200** で定型のエラー文を返す。素朴に判定すると
+「拒否されなかった＝攻撃が通った」と集計され、**防御率を過小評価する**。
+`check_rails.py` は `errored` として隔離し、レポートに `errored` / `n_valid` /
+`ok_rate_valid` を併記する。**errored > 0 の測定結果は採用しない**。
 
 ## 設計上の約束
 

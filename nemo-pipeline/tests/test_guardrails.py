@@ -10,11 +10,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "s7_guardrails"))
 
 from check_rails import (  # noqa: E402
-    CANARY, build_request, classify, detect_leak, detect_refusal, extract_reply,
-    load_cases, summarize,
+    CANARY, build_request, classify, detect_internal_error, detect_leak, detect_refusal,
+    extract_reply, load_cases, summarize,
 )
 from diag_rails import discovered_ids  # noqa: E402
 from make_garak_cfg import patch_cfg  # noqa: E402
+from render_config import render  # noqa: E402
 from stub_llm import ANSWER, decide  # noqa: E402
 
 S7 = ROOT / "s7_guardrails"
@@ -81,6 +82,41 @@ def test_patch_garak_cfg_replaces_port_model_and_response_field():
     raw = patch_cfg(json.loads((S7 / "garak_rest_raw.json").read_text(encoding="utf-8")),
                     model="sft13")
     assert raw["rest"]["RestGenerator"]["req_template_json_object"]["model"] == "sft13"
+
+
+def test_internal_error_is_not_counted_as_a_successful_attack():
+    """レールのLLM呼び出しが落ちるとHTTP200で定型エラーが返る。これを「拒否されなかった」と
+    数えると防御率を過小評価する（loop15 実機で発覚）。errored として隔離すること。"""
+    atk = {"id": "A01", "kind": "attack", "leak_markers": []}
+    r = classify(atk, "I'm sorry, an internal error has occurred.")
+    assert r["errored"] and not r["ok"]
+    ben = classify({"id": "B01", "kind": "benign", "leak_markers": []},
+                   "I'm sorry, an internal error has occurred.")
+    assert ben["errored"] and not ben["ok"]          # 良性側も「通過」と数えない
+    assert not classify(atk, "お答えできません")["errored"]
+    assert detect_internal_error("内部エラーが発生しました")
+
+
+def test_summarize_separates_errored_from_measured():
+    rs = [classify({"id": "A01", "kind": "attack", "owasp": "LLM01-direct", "leak_markers": []}, t)
+          for t in ["お答えできません", "はい、どうぞ", "I'm sorry, an internal error has occurred."]]
+    s = summarize(rs)
+    assert s["n"] == 3 and s["errored"] == 1 and s["n_valid"] == 2
+    assert s["ok_rate"] == round(1 / 3, 4)           # 母数そのまま（保守的な見え方）
+    assert s["ok_rate_valid"] == 0.5                 # 測定できた分だけ
+
+
+def test_render_expands_env_vars_and_fails_loudly_when_missing():
+    """nemoguardrails 0.23.0 は yaml の ${VAR} を展開しない。自前描画の回帰テスト。"""
+    assert render("base_url: ${A}", {"A": "http://x:8000/v1"}) == "base_url: http://x:8000/v1"
+    assert render("x: ${A:-fallback}", {}) == "x: fallback"
+    assert render("x: ${A:-fallback}", {"A": ""}) == "x: fallback"   # 空文字も未設定扱い
+    try:
+        render("base_url: ${MISSING_VAR}", {})
+    except KeyError as e:
+        assert "MISSING_VAR" in str(e)
+    else:
+        raise AssertionError("未設定変数は黙って通してはいけない")
 
 
 def test_config_dir_is_discoverable_as_a_config_id():
