@@ -293,15 +293,17 @@ guardrails:          ## サーバ起動（既定:8100。衝突時は GUARD_PORT 
 	  -v $(HOST_PWD)/s7_guardrails:/s7:ro $(GUARD_IMG) bash /s7/serve_rails.sh
 	@echo "起動確認: docker logs -f guardrails → 'Uvicorn running'。config一覧は :$(GUARD_PORT)/v1/rails/configs"
 
-guardrails-test:     ## B2: garak標準ベンチ（レールあり :8100）+ 公式evaluate
+# 公式 eval は 0.23.0 でサブコマンド構成が変わり（evaluate→eval、moderation は無い）、
+# 参考値なのに毎回エラーを出してノイズになる。使うときだけ WITH_EVAL=<サブコマンド> を指定する
+guardrails-test:     ## B2: garak標準ベンチ（レールあり :8100）。WITH_EVAL=<sub> で公式evalも併走
 	$(RUN) $(GUARD_IMG) bash -lc \
 	  "set -e; \
 	   python /pipeline/s7_guardrails/make_garak_cfg.py --template /pipeline/s7_guardrails/garak_rest.json \
 	     --out /tmp/garak_rest.json --port $(GARAK_GUARD_PORT) --model $(GUARD_MODEL) \
 	     $(if $(GUARD_HOST),--host $(GUARD_HOST)) \
 	     --resp-field '$(GARAK_RESP_FIELD)' && \
-	   nemoguardrails eval moderation --config /pipeline/s7_guardrails/config \
-	     || echo '[warn] eval は参考値（0.23.0でサブコマンド名が evaluate→eval に変更）。garak は続行する'; \
+	   $(if $(WITH_EVAL),nemoguardrails eval $(WITH_EVAL) --config /pipeline/s7_guardrails/config \
+	     || echo '[warn] eval は参考値。失敗しても garak は続行する';) \
 	   python -m garak --model_type rest --generator_option_file /tmp/garak_rest.json \
 	     --probes $(GARAK_PROBES) --generations $(GARAK_GENS) --report_prefix /results/garak_rails"
 guardrails-test-raw: ## B1: garak標準ベンチのベースライン（レールなし・vLLM直 :8002）
