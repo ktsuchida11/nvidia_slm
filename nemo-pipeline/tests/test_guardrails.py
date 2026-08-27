@@ -13,6 +13,7 @@ from check_rails import (  # noqa: E402
     CANARY, build_request, classify, detect_leak, detect_refusal, extract_reply,
     load_cases, summarize,
 )
+from diag_rails import discovered_ids  # noqa: E402
 from make_garak_cfg import patch_cfg  # noqa: E402
 from stub_llm import ANSWER, decide  # noqa: E402
 
@@ -80,6 +81,12 @@ def test_patch_garak_cfg_replaces_port_model_and_response_field():
     raw = patch_cfg(json.loads((S7 / "garak_rest_raw.json").read_text(encoding="utf-8")),
                     model="sft13")
     assert raw["rest"]["RestGenerator"]["req_template_json_object"]["model"] == "sft13"
+
+
+def test_config_dir_is_discoverable_as_a_config_id():
+    """s7_guardrails/ の直下に config.yml を持つ `config/` があること（config_id の元）。"""
+    assert discovered_ids(str(S7)) == ["config"]
+    assert discovered_ids("/does/not/exist") == []
 
 
 def test_config_yml_stays_in_sync_with_checker():

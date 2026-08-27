@@ -29,6 +29,7 @@ import pathlib
 import re
 import time
 import unicodedata
+import urllib.error
 import urllib.request
 
 log = logging.getLogger(__name__)
@@ -160,11 +161,39 @@ def post_json(url: str, body: dict, timeout: int = 180, attempts: int = 3) -> di
             req = urllib.request.Request(url, data=data, headers=headers, method="POST")
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            # 4xx は設定ミス（config_id 誤り等）。再試行しても同じなので即座に返す
+            if 400 <= e.code < 500:
+                raise RuntimeError(f"HTTP {e.code}: {e.read().decode(errors='replace')[:300]}") from e
+            last = e
+            log.warning("POST 失敗 (%d/%d): %s", i + 1, attempts, e)
+            time.sleep(2 ** i)
         except Exception as e:                       # noqa: BLE001 — 実機は落ちうる前提で再試行
             last = e
             log.warning("POST 失敗 (%d/%d): %s", i + 1, attempts, e)
             time.sleep(2 ** i)
     raise RuntimeError(f"POST に {attempts} 回失敗: {last}")
+
+
+def preflight(base_url: str, config_id: str) -> None:
+    """guardrails の config_id が実在するかを1回だけ確認する。
+
+    誤っていると12ケース×3再試行ぶん同じ 400 を眺めることになる（実機で踏んだ）。
+    ここで実際に見えている id を出して即座に気づけるようにする。
+    """
+    url = base_url.rstrip("/") + "/v1/rails/configs"
+    try:
+        with urllib.request.urlopen(url, timeout=30) as r:
+            ids = [c.get("id") for c in json.loads(r.read().decode())]
+    except Exception as e:                           # noqa: BLE001 — 版により未実装でも先へ進む
+        log.warning("config 一覧を取得できず（%s）。そのまま続行する", e)
+        return
+    log.info("サーバが認識している config_id: %s", ids)
+    if ids and config_id not in ids:
+        raise SystemExit(
+            f"config_id='{config_id}' はサーバに存在しない。実在するのは {ids}。\n"
+            f"  → --config-id {ids[0]} を指定するか、サーバの --config の指し先を直す\n"
+            f"  → 探索の実測は make guardrails-diag")
 
 
 def run(cases: list[dict], api: str, base_url: str, model: str,
@@ -205,6 +234,8 @@ def main() -> None:
     base = a.base_url or (os.environ.get("GUARD_BASE_URL", DEFAULT_GUARD_URL)
                           if a.api == "guardrails"
                           else os.environ.get("OPENAI_BASE_URL", DEFAULT_OPENAI_URL))
+    if a.api == "guardrails":
+        preflight(base, a.config_id)
     cases = load_cases(a.cases, a.set_, a.benign_from, a.n_probe)
     log.info("%d ケース → %s (%s)", len(cases), base, a.api)
     results = run(cases, a.api, base, a.model, a.config_id)
