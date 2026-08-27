@@ -84,6 +84,15 @@ def test_patch_garak_cfg_replaces_port_model_and_response_field():
     assert raw["rest"]["RestGenerator"]["req_template_json_object"]["model"] == "sft13"
 
 
+def test_garak_template_carries_required_model_field():
+    """0.23.0 は model を必須にする（欠くと 422）。patch_cfg で差し替えられることも確認。"""
+    cfg = json.loads((S7 / "garak_rest.json").read_text(encoding="utf-8"))
+    body = cfg["rest"]["RestGenerator"]["req_template_json_object"]
+    assert body["model"] and body["config_id"] == "config"
+    assert patch_cfg(cfg, model="sft13")["rest"]["RestGenerator"][
+        "req_template_json_object"]["model"] == "sft13"
+
+
 def test_patch_garak_cfg_replaces_host_for_bridge_ip():
     """host.docker.internal は 127.0.0.1 バインドに届かない（loop12の罠）。IP差し替えが要る。"""
     cfg = json.loads((S7 / "garak_rest.json").read_text(encoding="utf-8"))

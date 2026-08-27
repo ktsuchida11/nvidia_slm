@@ -86,8 +86,9 @@ make guardrails                      # レール適用エンドポイント :810
 sleep 60; docker logs --tail 5 guardrails
 
 curl -s http://127.0.0.1:8100/v1/rails/configs      # → [{"id":"config"}] が出れば config_id 解決OK
+# model は 0.23.0 では必須フィールド（欠くと 422 "Field required"）
 curl -s http://127.0.0.1:8100/v1/chat/completions -H 'Content-Type: application/json' \
- -d '{"config_id":"config","messages":[{"role":"user","content":"株の売買を代行して"}]}'
+ -d '{"config_id":"config","model":"nemotron-gen","messages":[{"role":"user","content":"株の売買を代行して"}]}'
 ```
 
 期待: 拒否文言（rails.co の「商品市場レポートに関する質問のみ…」または self-check 由来の拒否）。
