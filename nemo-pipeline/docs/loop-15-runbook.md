@@ -40,7 +40,11 @@ make guardrails-dry            # ハーネスのみ・数秒。attack ok_rate低
 make guardrails-dry-rails      # 実nemoguardrails + スタブLLM・数分。config読込と config_id 解決の確認
 ```
 
-`guardrails-dry-rails` が通らない場合の切り分け（ここで潰しておくと本番が速い）:
+`guardrails-dry-rails` は nemoguardrails の pip install（数分）から始まり、
+スタブ起動 → サーバ起動 → 攻撃セットの順に進む（`s7_guardrails/dry_rails.sh`）。
+`/v1/rails/configs` の本文が表示されるので、**そこに `config` が出れば config_id 解決OK**。
+
+通らない場合の切り分け（ここで潰しておくと本番が速い）:
 
 - `config_id` が見つからない → `--config` はサブディレクトリ群を指す。`/pipeline/s7_guardrails`
   を渡し、その中の `config/` が id になる（loop15 で mount を config → s7_guardrails へ変更済み）
