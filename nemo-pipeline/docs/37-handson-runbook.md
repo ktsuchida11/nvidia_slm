@@ -16,26 +16,36 @@
 $ git clone <このリポジトリのURL>
 $ cd nemo-pipeline
 $ make setup
-$ make build-tools        # 5-10分かかります
+$ docker pull python:3.12-bookworm                      # 1.5GB・数分
+$ printf 'PY_IMG := python:3.12-bookworm\n' > hostpath.mk
 ```
 
-`make build-tools` は Python の依存パッケージを焼き込んだ作業用イメージを作ります。
-これを作っておくと、**当日はオフラインで全部動きます**。
+**イメージのビルドは要りません。** Step 1〜5 で動かすスクリプトは Python 標準ライブラリだけで
+書かれているので、素の Python イメージがあれば足ります
+（`--network none` で遮断した状態で全 Step が通ることを実測確認済み）。
+
+`hostpath.mk` はこのリポジトリが用意している**マシン固有の設定ファイル**（git 管理外）です。
+既定の `python:3.12-slim` は **Apple Silicon の Docker Desktop で `exec I/O error` になる**ため、
+1行だけ書いて `bookworm` に差し替えています。
 
 **✅ 完了定義**
 
 ```bash
-$ docker images | grep nemo-tools
-nemo-tools   latest   ...
+$ docker run --rm python:3.12-bookworm python -c "print('ok')"
+ok
 ```
 
-この行が出れば準備完了です。
+`ok` が出れば準備完了です。
 
 > **うまくいかないとき**
 > - `permission denied`（Linux）: `sudo usermod -aG docker $USER` して再ログイン
 > - Windows: WSL2 の中で実行してください（`make` が要ります）
-> - 会社のプロキシで PyPI に出られない: 講師からイメージ tar をもらって
->   `docker load -i nemo-tools.tar`
+> - 会社のプロキシで Docker Hub に出られない: 講師からイメージ tar をもらって
+>   `docker load -i python-3.12-bookworm.tar`
+
+> **補足（今日は使いません）**: `make build-tools` で作る `nemo-tools:latest` は、
+> 実際に教師 API を叩く `make distill` や `make fetch` など、**外部ライブラリを本当に使う経路**の
+> ためのイメージです（11.7GB・ビルド 5-10分）。今日のハンズオンでは出番がありません。
 
 ---
 
@@ -492,9 +502,9 @@ $ ls checkpoints/sft/hf/
 
 | 症状 | 対処 |
 | --- | --- |
-| `pull access denied for nemo-tools` | `make build-tools` が未実施。または講師から tar をもらって `docker load -i` |
+| `pull access denied for nemo-tools` | `hostpath.mk` の `PY_IMG` が設定できていない。Step 0 の `printf` をやり直す |
 | `docker: permission denied` | Linux: `sudo usermod -aG docker $USER` して再ログイン |
-| `exec I/O error`（macOS） | Docker Desktop の arm64 slim 不具合。`hostpath.mk` で `python:3.12-bookworm` に切替 |
+| `exec I/O error`（macOS） | Docker Desktop の arm64 slim 不具合。`hostpath.mk` で `python:3.12-bookworm` に切替（Step 0 で設定済み） |
 | ポートが使えない（5000 / 8501） | macOS の AirPlay 等が占有。`hostpath.mk` で別ポートに逃がす |
 | `make` が見つからない（Windows） | WSL2 の中で実行する |
 | `setlocale: LC_ALL` の警告 | 表示だけの問題。無視してよい |
