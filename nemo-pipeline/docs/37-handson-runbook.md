@@ -53,8 +53,11 @@ ok
 
 ### 1-1. サンプルデータを作る
 
+演習用のサンプルは `data/demo_raw/` に置きます。`data/raw/` は「本物のデータを入れる場所」なので、
+**練習用の6件と混ぜません**（混ぜると下の数字が再現しません）。
+
 ```bash
-$ mkdir -p data/raw && python3 - << 'PY'
+$ mkdir -p data/demo_raw && python3 - << 'PY'
 import json, pathlib
 docs=[
  {"text":"昨日の原油価格は上昇。WTIは前日比+1.8ドルの67ドル。中東情勢の緊迫が材料。OPECの減産遵守が需給を引き締め。ヘッジは分割の値決めを検討すべき局面。","meta":{"license":"own","title":"3/2 原油"}},
@@ -64,7 +67,7 @@ docs=[
  {"text":"asdf!!!! ????","meta":{"license":"own"}},
  {"text":"商用不可サンプル。金銀相場の説明。","meta":{"license":"cc-by-nc"}},
 ]
-pathlib.Path("data/raw/sample.jsonl").write_text(
+pathlib.Path("data/demo_raw/sample.jsonl").write_text(
     "\n".join(json.dumps(d,ensure_ascii=False) for d in docs), encoding="utf-8")
 print("6件書きました")
 PY
@@ -73,8 +76,8 @@ PY
 ### 1-2. 通す
 
 ```bash
-$ make curate
-$ cat data/curated/stats.json
+$ make curate-demo
+$ cat data/demo_curated/stats.json
 ```
 
 **出るはずの数字**:
@@ -91,7 +94,7 @@ $ cat data/curated/stats.json
 ```bash
 $ python3 -c "
 import json
-for l in open('data/curated/rejected.jsonl'):
+for l in open('data/demo_curated/rejected.jsonl'):
     d=json.loads(l); print(d['reject_reason'], '|', d['text'][:30])
 "
 ```
@@ -108,7 +111,7 @@ license:cc-by-nc | 商用不可サンプル。金銀相場の説明。
 ```bash
 $ python3 -c "
 import json
-for l in open('data/curated/curated.jsonl'): print(json.loads(l)['text'][:70])
+for l in open('data/demo_curated/curated.jsonl'): print(json.loads(l)['text'][:70])
 "
 ```
 
@@ -119,7 +122,7 @@ for l in open('data/curated/curated.jsonl'): print(json.loads(l)['text'][:70])
 
 ### 1-4. 演習: 自分で1件足して、狙った理由で落とす
 
-`data/raw/sample.jsonl` に1行足して `make curate` をやり直します。
+`data/demo_raw/sample.jsonl` に1行足して `make curate-demo` をやり直します。
 
 | お題 | 期待する結果 |
 | --- | --- |
