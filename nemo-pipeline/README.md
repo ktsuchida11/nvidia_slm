@@ -25,8 +25,9 @@ microservice にそのまま移行できる形式なので、今 library で作�
 
 ![パイプライン全体像](docs/architecture-overview.svg)
 
-> 緑タグ＝各ステージで使うNVIDIA NeMoライブラリ。赤破線＝held-out（学習に使わず評価専用）。
-> **「使う」＝アプリでのモデル使い分け/RAG/ルーティングは実行時の別アーキ**なので別図に分離: `docs/serving-routing-overview.svg`
+> 緑タグ＝各ステージで使うNVIDIA NeMoライブラリ。**黒タグ＝NeMo外**（S2 の教師＝Claude API、S6＝自作採点器）。
+> 赤破線＝held-out（学習・報酬に使わず評価専用）。図中の数値は `docs/loop-01〜15-report.md` の実測。
+> **「使う」＝実行時のモデル使い分け/検索/ルーティングは別アーキ**なので別図に分離: `docs/serving-routing-overview.svg`
 
 ![使う（推論構成）](docs/serving-routing-overview.svg)
 
