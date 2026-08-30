@@ -149,6 +149,8 @@ make rag-rerank-dry
 - [ ] `docker pull python:3.12-bookworm`（イメージのビルドは不要）
 - [ ] **`data/demo_raw/`** にデモ用サンプル6件を配置（`37-handson-runbook.md` Step 1-1 のスクリプト。
       **`data/raw/` に置かないこと** — 実データと混ざってデモの数字が変わる）
+- [ ] **スライドを PDF 化して1枚ずつ目視**（`npx @marp-team/marp-cli@4.2.3 docs/36-slides.md -o slides.pdf`）。
+      **日本語フォントのあるホストで変換すること** — 無い環境だと全部豆腐（□）になる
 - [ ] デモ4本を通しで1回流して所要時間を測る
 - [ ] `data/distilled/` の実データが壊れていないか確認（**`make distill-dry` は別ディレクトリに出る**ように修正済み）
 - [ ] 画面共有のフォント拡大・`results/` を消さない
