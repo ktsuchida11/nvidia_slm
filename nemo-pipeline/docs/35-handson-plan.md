@@ -18,25 +18,41 @@
 ### 参加者の PC（必須）
 
 - **Docker が動くこと**（Docker Desktop / Colima / Docker Engine いずれでも可）
-- ディスク空き **10GB 以上**（ツールイメージ ~4GB + 作業領域）
+- ディスク空き **5GB 以上**（Python イメージ 1.5GB + 作業領域）
 - メモリ 8GB 以上
-- ネットワーク: **当日は不要**。ただし**事前課題でイメージを作る**ためにその時だけ必要
+- ネットワーク: **当日は不要**。事前課題でイメージを1つ pull するときだけ必要
 
 ### 事前課題（開催3日前までに案内）
 
 ```bash
 git clone <このリポジトリ> && cd nemo-pipeline
 make setup
-make build-tools      # 5-10分。PyPI へ出られる環境で
-docker images | grep nemo-tools    # nemo-tools:latest が出れば完了
+docker pull python:3.12-bookworm                      # 1.5GB・数分
+printf 'PY_IMG := python:3.12-bookworm\n' > hostpath.mk
+docker run --rm python:3.12-bookworm python -c "print('ok')"   # ok が出れば完了
 ```
 
-**これが最大の脱落ポイント**です。前日に「できた人／できていない人」を挙手で確認し、
-できていない人には当日 USB か社内共有でイメージ tar を配る（`docker save/load`）。
+**イメージのビルドは不要**。Step 1〜5 が使うスクリプト
+（`s1_curate.py` / `s2_distill.py` / `build_index.py` / `recall_eval.py` / `probe_qa.py` /
+`check_rails.py`）は **Python 標準ライブラリだけで動く**ように書かれている。
+numpy / anthropic / nemo_curator の import は全て遅延・任意で、無ければフォールバックする。
+
+**実測確認（2026-08-28）**: `--network none` かつ `nemo-tools` を使わず、素の
+`python:3.12-bookworm` だけで Step 1〜4 が完走し、数値も本書 §3 の表と完全一致した。
+
+> 当初は `make build-tools`（5-10分・PyPI 必須・**11.7GB**）を事前課題にしていたが、
+> **ハンズオンには不要**と実測で分かったので外した。ここが最大の脱落ポイントだったので、
+> 事前課題は `docker pull` 1本まで軽くなっている。
+> `nemo-tools` が要るのは実課金の `make distill` / `make fetch` など、
+> 外部ライブラリを本当に使う経路だけ。
+
+`hostpath.mk` はリポジトリが用意しているマシン固有の設定ファイル（git 管理外）。
+既定の `python:3.12-slim` は **Apple Silicon の Docker Desktop で `exec I/O error`** になるため、
+1行だけ書いて差し替える。
 
 ### 講師側の準備
 
-- 予備の `nemo-tools` イメージ tar（`docker save nemo-tools:latest -o nemo-tools.tar`）
+- 予備の Python イメージ tar（`docker save python:3.12-bookworm -o python-3.12-bookworm.tar`）
 - 各 Step の完了時に出るべき数値の一覧（`37-handson-runbook.md` の「✅ 完了定義」）
 - Step 6 用の GPU（後述の §4 で可否を判定）
 
@@ -224,7 +240,8 @@ loop13 実測: **9B LoRA・seq4096 は L40S 44GB×1 で OOM**
 
 | 症状 | 原因 | 対処 |
 | --- | --- | --- |
-| `pull access denied for nemo-tools` | 事前課題の `make build-tools` 未実施 | イメージ tar を配布して `docker load` |
+| `pull access denied for nemo-tools` | `hostpath.mk` の `PY_IMG` 未設定（既定が `nemo-tools` の環境） | 事前課題の `printf 'PY_IMG := python:3.12-bookworm\n' > hostpath.mk` をやり直す |
+| `python:3.12-bookworm` が pull できない | プロキシで Docker Hub に出られない | イメージ tar を配布して `docker load` |
 | `docker: permission denied` | Docker グループ未所属（Linux） | `sudo usermod -aG docker $USER` して再ログイン |
 | macOS で `*-slim` イメージが `exec I/O error` | Docker Desktop の arm64 slim 不具合 | `python:3.12-bookworm` を使う（`hostpath.mk` で切替済み） |
 | ポート衝突（5000 / 8501） | macOS の AirPlay 等が占有 | `hostpath.mk` で別ポートに逃がす |

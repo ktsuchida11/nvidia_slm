@@ -82,6 +82,8 @@
 | 症状 | 原因 | 対処 |
 |---|---|---|
 | **`make distill-dry` が実データを壊す**（train/valid/**heldout** がダミーで上書きされる） | dry と本走が同じ `--out /data/distilled` を指していた。`*-dry` は他段では `_dry` 付きの別ディレクトリに出るのに、S2 の2本（distill/finqa）だけ例外だった | 出力を `/data/distilled_dry` `/data/finqa_dry` に分離（`DRY_OUT` で上書き可）。回帰テスト `tests/test_dry_targets_isolated.py` で「dry が実データの出力先を指していないこと」を機械的に保証。**heldout は不可侵資産なので、復旧は S3 から** |
+| ツールイメージを再ビルドすると中身が変わる（loop15 検証時 `nemoguardrails` 0.23.0 → 再ビルドで 0.24.0） | `docker/tools.Dockerfile` / `s7_guardrails/Dockerfile` がバージョン未固定。クールダウン指定はあるが版は固定しない | 直接依存を `==` で固定した。**版を上げるときは「上げてから loop を回す」のではなく「上げた版で dry を通してから」ピンを動かす**。loop report の実測値は版とペアで意味を持つ |
+| ユニットテストは通るのに**オフライン環境でだけ**全ステップが ImportError で止まる | 実行経路のトップレベルに外部 import が増えた。開発機は依存入りイメージなので気づけない | ハンズオンは素の `python:3.12-bookworm`・`--network none` で回す前提。`tests/test_handson_stdlib_only.py` が「実行経路のトップレベル import が stdlib かリポ内モジュールだけ」を静的に検査する。外部依存は遅延 import か `try/except ImportError` のフォールバックにする |
 
 ## データ・評価設計（loop1/9/10）
 
