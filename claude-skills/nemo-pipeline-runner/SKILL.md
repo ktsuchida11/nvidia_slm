@@ -2,15 +2,22 @@
 name: nemo-pipeline-runner
 description: >
   NVIDIA NeMoパイプライン（nemo-pipeline/）をClaude Codeで自動運転・評価ループさせるスキル。
-  loop1〜10の実測知見（手法選択・評価3層・課金ゲート・実機罠・リモートGPU運用）を運用知として内蔵。
-  データ準備→S1 curate→(S2 distill)→(S3 DAPT)→S4 SFT→S5 GRPO→S6 eval を Makefile 経由で実行し、
-  S6の合否と診断定石に基づいて次の一手を判断する。
+  loop1〜15の実測知見（手法選択・評価3層・課金ゲート・実機罠・リモートGPU運用）を運用知として内蔵。
+  データ準備→S1 curate→(S2 distill)→(S3 DAPT)→S4 SFT→S5 GRPO→S6 eval→S7 Guardrails→S8 Retriever(RAG)
+  を Makefile 経由で実行し、S6の合否と診断定石に基づいて次の一手を判断する。
   「NeMoパイプラインを回して」「評価ループ」「次のループを設計して」「base測定して」
-  「SFT/GRPO/DAPTどれを使うべきか」「ノードで学習して」などで発動。
+  「SFT/GRPO/DAPT/RAGどれを使うべきか」「ガードレールを検証して」「ノードで学習して」などで発動。
   コスト・GPU・外部APIを伴う操作は必ず人間の承認を得てから実行する。
 ---
 
 # NeMo Pipeline Runner — 自動運転と評価ループ
+
+> **反映範囲: loop1〜15（最終書き戻し 2026-08-27 / loop15）。**
+> この行が最新の `docs/loop-*-report.md` より古いなら、読んでいるのは**配布先の古いコピー**。
+> `cp -r <repo>/claude-skills/nemo-pipeline-runner <プロジェクトルート>/.claude/skills/` で
+> 再配布してから判断すること（**配布先はリポジトリルートではなく `CLAUDE.md` のある階層**。
+> この環境では `/workspace/.claude/skills/` ＝ リポジトリの1つ上。手順は claude-skills/README.md）
+> （実際に loop11 時点のコピーが4周ぶん放置され、消化済みのコンポーネントを「未消化」と返していた）。
 
 ## 前提
 
@@ -18,7 +25,7 @@ description: >
 - **学習・配信はリモートGPUノード**（AWS spot g6e系・L40S）で行う。ローカル（DevContainer/Mac）は
   実装・テスト・$0配管検証まで。ノードとの同期・起動停止は [references/operations.md](references/operations.md)。
 - 参照の正: docs/10-runbook.md（基本手順）、docs/loop-XX-report.md（各ループの実測結論）、
-  s6_evaluation/（評価定義）。本スキルの references/ は loop1-10 の蒸留版で、矛盾したら loop report が正。
+  s6_evaluation/（評価定義）。本スキルの references/ は loop1-15 の蒸留版で、矛盾したら loop report が正。
 
 ## ループの型（1周 = 以下を順に）
 
@@ -31,7 +38,11 @@ description: >
    （概算→小規模実測→再見積り→承認）に従う
 5. **評価**: [references/evaluation.md](references/evaluation.md) の評価3層＋リーク検査＋統計的判定
 6. **総括**: docs/loop-XX-report.md に「何を試し・何がダメで・なぜか・次どうするか」を実測値で記録。
-   罠を踏んだら [references/traps.md](references/traps.md) 形式でカタログ化
+   罠を踏んだら [references/traps.md](references/traps.md) 形式でカタログ化。**測定値が出ないループでも
+   レポートは書く**（loop11 を書かなかったため後続4周の参照先が欠番になった）。
+   最後に**スキルを配布先へ反映**（この環境では
+   `cp -r /workspace/nvidia_slm/claude-skills/nemo-pipeline-runner /workspace/.claude/skills/`）と
+   冒頭「反映範囲」行の更新まででワンセット（書き戻しただけでは稼働中のスキルは古いまま）
 
 ## 承認ゲート（must）— 実行前に必ずユーザーへ確認
 

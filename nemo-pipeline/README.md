@@ -3,8 +3,7 @@
 データ収集 → 蒸留 → (継続事前学習) → SFT → 強化学習(GRPO) → 評価 → ガードレール → **検索拡張(RAG)** を
 **NVIDIA NeMoのライブラリ層（無償・Apache 2.0）だけ**で貫くパイプライン。
 
-**15周まわした実測記録つき**（累計 ~$400）。各周の結論は `docs/loop-*-report.md`（**14本**。
-loop11 はスキル化のみでレポートを書いていないため欠番）、
+**15周まわした実測記録つき**（累計 ~$400）。各周の結論は `docs/loop-*-report.md`（**15本**）、
 踏んだ罠は `claude-skills/nemo-pipeline-runner/references/traps.md` にある。
 **最大の発見は「知識注入は DAPT ではなく RAG」**（DAPT 見積り $300-550 に対し RAG 実測 $12 で
 probe 0.0402 → 0.4724、rerank 追加で 0.6332）。
@@ -87,7 +86,7 @@ microservice にそのまま移行できる形式なので、今 library で作�
 | `s7_guardrails/` | S7 ガードレール | config/（config.yml + rails.co）/ check_rails.py / **stub_llm.py + wait_http.py（`guardrails-dry` の実体・GPU不要）** / llm_proxy.py / garak_rest.json / render_config.py / make_garak_cfg.py / inspect_garak.py / diag_rails.py |
 | **`s8_retrieval/`** | **S8 検索拡張 RAG** | build_index.py / embedder.py / retrieve.py / reranker.py / recall_eval.py / chunker.py / build_grounded_sft.py |
 | `tests/` | ユニット・回帰テスト | 11ファイル。`for t in tests/test_*.py; do python3 "$t"; done` で全部走る（pytest 不要） |
-| `docs/` | 文書 | 00-environment / 10-runbook / **loop-*-report 14本（実測の出典・loop11 は欠番）** / 34-38（勉強会の資料一式） |
+| `docs/` | 文書 | 00-environment / 10-runbook / **loop-*-report 15本（実測の出典。loop11 は測定なしの運用ループ）** / 34-38（勉強会の資料一式） |
 
 ## 🖥 GPU の実績と VRAM
 

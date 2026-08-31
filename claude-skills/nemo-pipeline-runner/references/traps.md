@@ -1,6 +1,8 @@
-# 実機罠カタログ（loop-01/08/09/10 実測。詳細は各 docs/loop-XX-report.md）
+# 実機罠カタログ（loop-01〜15 実測。詳細は各 docs/loop-XX-report.md）
 
 新しい罠を踏んだら「症状→原因→対処」でここに追記し、該当 loop report にも残す。
+追記したら**配布先へ再コピーする**（この環境では
+`cp -r /workspace/nvidia_slm/claude-skills/nemo-pipeline-runner /workspace/.claude/skills/`）。
 
 ## NeMo-RL v0.6.0（SFT/GRPO — loop8/9）
 
@@ -84,6 +86,8 @@
 | **`make distill-dry` が実データを壊す**（train/valid/**heldout** がダミーで上書きされる） | dry と本走が同じ `--out /data/distilled` を指していた。`*-dry` は他段では `_dry` 付きの別ディレクトリに出るのに、S2 の2本（distill/finqa）だけ例外だった | 出力を `/data/distilled_dry` `/data/finqa_dry` に分離（`DRY_OUT` で上書き可）。回帰テスト `tests/test_dry_targets_isolated.py` で「dry が実データの出力先を指していないこと」を機械的に保証。**heldout は不可侵資産なので、復旧は S3 から** |
 | ツールイメージを再ビルドすると中身が変わる（loop15 検証時 `nemoguardrails` 0.23.0 → 再ビルドで 0.24.0） | `docker/tools.Dockerfile` / `s7_guardrails/Dockerfile` がバージョン未固定。クールダウン指定はあるが版は固定しない | 直接依存を `==` で固定した。**版を上げるときは「上げてから loop を回す」のではなく「上げた版で dry を通してから」ピンを動かす**。loop report の実測値は版とペアで意味を持つ |
 | ユニットテストは通るのに**オフライン環境でだけ**全ステップが ImportError で止まる | 実行経路のトップレベルに外部 import が増えた。開発機は依存入りイメージなので気づけない | ハンズオンは素の `python:3.12-bookworm`・`--network none` で回す前提。`tests/test_handson_stdlib_only.py` が「実行経路のトップレベル import が stdlib かリポ内モジュールだけ」を静的に検査する。外部依存は遅延 import か `try/except ImportError` のフォールバックにする |
+| **スキルが「消化済みのコンポーネントを未消化」と答える**（内容は破綻していないので気づけない） | 書き戻し先は `claude-skills/` だが、エージェントが読むのは `cp -r` した `.claude/skills/` の配布物。loop12〜15 の書き戻しを4回やって、コピーを1回も再実行していなかった＝**稼働中のスキルが loop11 時点で凍結** | 総括の最後に**必ず配布先へ再コピー**する（loop-XX-report を書いたら配布まででワンセット）。SKILL.md 冒頭の「反映範囲」行 or `ls -ld <配布先>` の日付で古さは即判定できる |
+| 再コピーしたのに配布先が更新されない | **配布先はリポジトリルートではなく `CLAUDE.md` のあるプロジェクトルートの `.claude/skills/`**。この環境では `/workspace/.claude/skills/` で、リポジトリ `/workspace/nvidia_slm/` の1つ上。リポジトリルートで相対パス `cp -r ... .claude/skills/` を叩くと `/workspace/nvidia_slm/.claude/skills/` という別の場所が新規作成され、本物の古いコピーはそのまま残る | 絶対パスで叩く: `cp -r /workspace/nvidia_slm/claude-skills/nemo-pipeline-runner /workspace/.claude/skills/`。反映確認は `diff -rq` の2引数で |
 
 ## データ・評価設計（loop1/9/10）
 

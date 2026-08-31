@@ -518,7 +518,7 @@ $ ls checkpoints/sft/hf/
 | 見たいもの | ファイル |
 | --- | --- |
 | E2E の全体手順 | `docs/10-runbook.md` |
-| 各周で何をやって何が起きたか | `docs/loop-*-report.md`（14本。loop11 は欠番） |
+| 各周で何をやって何が起きたか | `docs/loop-*-report.md`（15本） |
 | 手法選択の決定表 | `claude-skills/nemo-pipeline-runner/references/decision-table.md` |
 | 実機の罠カタログ | `claude-skills/nemo-pipeline-runner/references/traps.md` |
 | 評価設計の考え方 | `claude-skills/nemo-pipeline-runner/references/evaluation.md` |
