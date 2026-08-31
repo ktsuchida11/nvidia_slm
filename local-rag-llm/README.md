@@ -42,14 +42,19 @@ local-rag-llm/
 3. `docker compose up -d`（インフラのみ）→ VS Code「Reopen in Container」。
    GPU未接続でも fallbacks により全経路Claudeで動く＝開発が止まらない。
 4. Claude Code に設計書を読ませ、チェックリストを上から1つずつ実装依頼。
-5. 学習は Colab/EC2、本番推論は自前GPUホスト（Linux or WindowsのWSL2）。
+5. **学習は `nemo-pipeline/`**（AWS g6e spot = L40S 48GB。15周の実績と課金ゲートがそのまま使える）。
+   本番推論は自前GPUホスト（Linux or WindowsのWSL2）。
+   > 設計書は学習環境を Colab/EC2 と書いているが、これは 2026-07 時点の記述。
+   > 現在は nemo-pipeline を使う（`nemo-pipeline/docs/38-query-analysis-runbook.md`）。
 
 ## 設計の前提（要点）
 - 開発=DevContainer（CPU/API面）/ **学習=`nemo-pipeline/`（AWS g6e spot = L40S 48GB で15周実績）** / 本番推論=自前GPUホスト
 - 評価ファースト: 指標・閾値・held-out評価セットを先に用意し **base を測ってから学習の要否を決める**
   （loop9 では base が強いタスクに SFT を当てて 0.836 → 0.115 に壊した）
 - コンテナ間はサービス名直結（host.docker.internal頼みはLinuxで壊れる）
-- **配信は vLLM 固定**。Nemotron-Nano-9B-v2 は Mamba+Attention ハイブリッドで GGUF 非対応、
-  Qwen3.5 も Ollama 非対応。**Ollama / llama.cpp は使えない**（好みではなくモデル側の制約）
+- **配信は vLLM 固定**（好みではなくモデル側の制約）。回答生成の既定 Nemotron-Nano-9B-v2 は
+  Mamba+Attention ハイブリッドで **GGUF 非対応** → llama.cpp / Ollama のどちらにも載らない。
+  クエリ解析の Qwen3.5 は **Ollama 非対応**（mmproj 分離）。詳細は設計書「補足: vLLM と Ollama の
+  どちらを使うか」
 - 分岐は全部ルールベース（LLM に「難しいか」を判定させない）。ルーティング点は①クエリ解析と③回答生成の2箇所
 - 経済性の数値は見積もり。実測で再確認

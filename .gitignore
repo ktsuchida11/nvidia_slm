@@ -7,8 +7,15 @@ age.key
 .config/sops/
 secrets.*
 models/
-data/
-!data/.gitkeep
+# `data/` ではなく `**/data/*` にしてある。ディレクトリ自体を除外すると git が中に
+# 降りず、下の否定パターンが効かないため（gitignore の仕様）。`data/*` だと逆に
+# スラッシュを含むぶんリポジトリ直下にしか掛からず、nemo-pipeline/data/ の実データが
+# 追跡対象に化ける。両方踏んだので `**/` を明示している。
+**/data/*
+!**/data/.gitkeep
+# デモ・演習用サンプルだけは追跡する。クローン直後に README のクイックスタート
+# （make curate-demo）が動かないと、最初の1コマンドで詰まるため。
+!**/data/demo_raw/
 *.gguf
 *.safetensors
 .venv/

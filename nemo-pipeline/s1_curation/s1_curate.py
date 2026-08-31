@@ -209,7 +209,10 @@ def main(inp: str, out: str, engine: str) -> None:
     (out_p / "stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
     log.info("done: %s", stats)
     if not kept:
-        log.error("no documents kept — check /data/raw"); sys.exit(1)
+        # 入力先は --in で差し替わる（curate-demo は /data/demo_raw）。固定文字列で
+        # /data/raw を案内すると、存在しない場所を見に行かせることになる
+        log.error("no documents kept — 入力を確認: %s（*.jsonl が空か、全件が棄却されました）",
+                  inp_p); sys.exit(1)
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()

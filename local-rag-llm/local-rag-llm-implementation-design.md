@@ -46,7 +46,11 @@
 
 ### ハードウェア / 環境
 - **開発**: DevContainer + Claude Code(CPU/API面)。GPU推論サーバへは `host.docker.internal` でHTTP接続。詳細は **12章**。
-- **学習**: Colab A100(40/80GB) または EC2 spot(g6e.xlarge = L40S 48GB)。予算 ~$100。
+- **学習**: ~~Colab A100(40/80GB) または EC2 spot(g6e.xlarge = L40S 48GB)。予算 ~$100。~~
+  **【2026-08 改訂】学習は `nemo-pipeline/` で行う**（AWS g6e spot = L40S 48GB。15周ぶんの
+  罠カタログ・課金ゲート・リーク検査・評価ハーネスがそのまま効く）。手順は
+  `nemo-pipeline/docs/38-query-analysis-runbook.md`。以降の本文に残る「Colab/EC2」は
+  この改訂前の記述。
 - **本番推論**: 所有マシン(RTX5090 32GB or Mac Studio 等)で自己ホスト。限界費用ほぼ$0。GTX1660 は使わない。
 - **配信**: 学習済み → **vLLM(OpenAI互換, 既定bf16/任意fp8)** → LiteLLM(`127.0.0.1:4000`)。※既定NemotronはvLLM必須でGGUF非対応。GGUF/llama.cppはGGUF対応モデル使用時の代替。
 
@@ -298,6 +302,11 @@ def needs_retrieval(qa: dict) -> bool:
 ### 6.4 配信
 **vLLM の OpenAI互換エンドポイント**で配信（既定bf16／任意fp8）→ LiteLLM の model_list に追加。GGUF対応モデルなら llama.cpp も代替可。
 > ⚠ **ファクトチェック反映**: Qwen3.5 はマルチモーダル(VLM)で mmproj が分離しているため、**現状 Ollama では GGUF が動かない**(Unslothドキュメント記載)。よって配信は Ollama ではなく llama.cpp / vLLM を用いる。thinking は小型(0.8B〜9B)で既定OFF。
+>
+> 【2026-08 改訂】上の「llama.cpp も代替可」は**クエリ解析（Qwen3.5）に限った話**。回答生成の
+> 既定を Nemotron-Nano-9B-v2 にした時点で、**llama.cpp / Ollama はどちらも選べない**
+> （Mamba+Attention ハイブリッドで GGUF 非対応）。結論と根拠は §ハードウェア/環境の
+> 「補足: vLLM と Ollama のどちらを使うか」に集約した。**そちらを正とする。**
 
 ---
 
