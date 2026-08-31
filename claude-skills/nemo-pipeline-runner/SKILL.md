@@ -14,7 +14,9 @@ description: >
 
 > **反映範囲: loop1〜15（最終書き戻し 2026-08-27 / loop15）。**
 > この行が最新の `docs/loop-*-report.md` より古いなら、読んでいるのは**配布先の古いコピー**。
-> `cp -r claude-skills/nemo-pipeline-runner .claude/skills/` で再配布してから判断すること
+> `cp -r <repo>/claude-skills/nemo-pipeline-runner <プロジェクトルート>/.claude/skills/` で
+> 再配布してから判断すること（**配布先はリポジトリルートではなく `CLAUDE.md` のある階層**。
+> この環境では `/workspace/.claude/skills/` ＝ リポジトリの1つ上。手順は claude-skills/README.md）
 > （実際に loop11 時点のコピーが4周ぶん放置され、消化済みのコンポーネントを「未消化」と返していた）。
 
 ## 前提
@@ -38,7 +40,8 @@ description: >
 6. **総括**: docs/loop-XX-report.md に「何を試し・何がダメで・なぜか・次どうするか」を実測値で記録。
    罠を踏んだら [references/traps.md](references/traps.md) 形式でカタログ化。**測定値が出ないループでも
    レポートは書く**（loop11 を書かなかったため後続4周の参照先が欠番になった）。
-   最後に**スキルを配布先へ反映**: `cp -r claude-skills/nemo-pipeline-runner .claude/skills/` と
+   最後に**スキルを配布先へ反映**（この環境では
+   `cp -r /workspace/nvidia_slm/claude-skills/nemo-pipeline-runner /workspace/.claude/skills/`）と
    冒頭「反映範囲」行の更新まででワンセット（書き戻しただけでは稼働中のスキルは古いまま）
 
 ## 承認ゲート（must）— 実行前に必ずユーザーへ確認

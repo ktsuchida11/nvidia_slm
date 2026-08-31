@@ -22,20 +22,33 @@ nemo-pipeline-runner/
 
 ### インストール
 
-```bash
-# プロジェクト単位（推奨: このリポで作業する時だけ有効）
-mkdir -p .claude/skills
-cp -r claude-skills/nemo-pipeline-runner .claude/skills/
+**配布先は「プロジェクトルート（`CLAUDE.md` のある階層）の `.claude/skills/`」であって、
+リポジトリルートとは限らない。** この環境では両者が1階層ずれている:
 
-# またはユーザー全体
-cp -r claude-skills/nemo-pipeline-runner ~/.claude/skills/
+```
+/workspace/                                   ← プロジェクトルート（CLAUDE.md）
+├── .claude/skills/nemo-pipeline-runner       ← 配布先: ここを読む
+└── nvidia_slm/                               ← git リポジトリ
+    └── claude-skills/nemo-pipeline-runner    ← 書き戻し先: ここを編集する
 ```
 
-> **書き戻したら、必ずこのコピーを再実行する。** 配布先（`.claude/skills/`）は手動コピーなので、
+```bash
+# この環境（DevContainer内）での再配布。/workspace は Mac からの
+# バインドマウント（virtiofs）なのでコンテナを作り直しても残る
+cp -r /workspace/nvidia_slm/claude-skills/nemo-pipeline-runner /workspace/.claude/skills/
+
+# ユーザー全体に入れる場合
+cp -r /workspace/nvidia_slm/claude-skills/nemo-pipeline-runner ~/.claude/skills/
+```
+
+`cp -r` は配布先に同名ディレクトリがあれば中身を上書きマージするので、そのまま再実行してよい。
+
+> **書き戻したら、必ずこのコピーを再実行する。** 配布先は手動コピーなので、
 > ここを更新しても自動では反映されない。実際に loop12〜15 の書き戻し4回ぶんが配布先に届かず、
 > 稼働中のスキルが loop11 時点で凍結して「消化済みのコンポーネントを未消化と答える」状態が続いた
 > （`docs/loop-11-report.md` §5）。**古さの判定は SKILL.md 冒頭の「反映範囲」行**を
-> 最新の `docs/loop-*-report.md` の番号と突き合わせる。
+> 最新の `docs/loop-*-report.md` の番号と突き合わせる。配布先の実体は
+> `ls -ld <配布先>` の日付でも分かる（凍結時は loop11 マージ当日の日付のままだった）。
 
 ### 使い方（Claude Codeでの発話例）
 
