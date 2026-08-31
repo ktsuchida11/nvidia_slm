@@ -1,17 +1,18 @@
-<svg viewBox="0 0 1180 620" xmlns="http://www.w3.org/2000/svg" font-family="'Yu Gothic','Hiragino Sans','Noto Sans JP','Meiryo',sans-serif">
+<svg viewBox="0 0 1180 700" xmlns="http://www.w3.org/2000/svg" font-family="'Yu Gothic','Hiragino Sans','Noto Sans JP','Meiryo',sans-serif">
   <defs>
     <marker id="b" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#334155"/></marker>
     <marker id="g" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#0D9488"/></marker>
+    <marker id="o" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#B45309"/></marker>
   </defs>
-  <rect width="1180" height="620" fill="#FFFFFF"/>
+  <rect width="1180" height="700" fill="#FFFFFF"/>
 
   <!-- Title -->
   <rect x="0" y="0" width="1180" height="64" fill="#0D9488"/>
-  <text x="28" y="29" fill="#FFFFFF" font-size="20" font-weight="700">使う（推論構成）— 1本の直列パイプライン。ルーティングは2箇所だけ</text>
-  <text x="28" y="50" fill="#CFF0E9" font-size="12">対象アプリ local-rag-llm の<tspan font-weight="700">設計</tspan>（src/ は未着手）。学習は別図 architecture-overview.svg が担当し、そこで作った 9B をここに載せる。</text>
+  <text x="28" y="29" fill="#FFFFFF" font-size="20" font-weight="700">使う（推論構成）— 直列パイプライン。分岐はすべてルールベース</text>
+  <text x="28" y="50" fill="#CFF0E9" font-size="12">対象アプリ local-rag-llm の<tspan font-weight="700">設計</tspan>（src/ は未着手）。学習は別図 architecture-overview.svg。<tspan font-weight="700">橙の破線 = 本設計にない提案</tspan>。</text>
 
   <!-- Guardrail frame -->
-  <rect x="20" y="96" width="1140" height="392" rx="12" fill="#FBF9FE" stroke="#7C3AED" stroke-width="1.4" stroke-dasharray="7 4"/>
+  <rect x="20" y="96" width="1140" height="424" rx="12" fill="#FBF9FE" stroke="#7C3AED" stroke-width="1.4" stroke-dasharray="7 4"/>
   <rect x="36" y="88" width="392" height="20" rx="6" fill="#7C3AED"/>
   <text x="46" y="102" fill="#FFFFFF" font-size="11" font-weight="600">S7 ガードレール（Phase 3）：入力 → 取得 → 出力 の3レール</text>
   <text x="1144" y="112" text-anchor="end" fill="#7C3AED" font-size="10.5">監視 = LangFuse（全I/Oを記録＝監査証跡）</text>
@@ -29,82 +30,107 @@
   <rect x="480" y="136" width="230" height="66" rx="8" fill="#FFFFFF" stroke="#0D9488" stroke-width="1.8"/>
   <text x="595" y="160" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2937">LiteLLM ゲートウェイ</text>
   <text x="595" y="177" text-anchor="middle" font-size="9.5" fill="#6B7280">全LLM呼び出しの唯一の関所</text>
-  <text x="595" y="191" text-anchor="middle" font-size="9.5" fill="#6B7280">差し込み口は①と③の2箇所だけ</text>
+  <text x="595" y="191" text-anchor="middle" font-size="9.5" fill="#6B7280">モデル差し込み口は①と③</text>
 
   <rect x="740" y="136" width="230" height="66" rx="8" fill="#FFFFFF" stroke="#0D9488" stroke-width="1.5"/>
-  <text x="855" y="158" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2937">① クエリ解析</text>
+  <text x="855" y="158" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2937">① クエリ解析 ＝ 分岐点</text>
   <text x="855" y="175" text-anchor="middle" font-size="9.5" fill="#6B7280">質問を sectors / 日付 / 種別に構造化</text>
-  <text x="855" y="190" text-anchor="middle" font-size="9.5" fill="#1D4ED8" font-weight="600">route_analysis() → qwen3-analysis（4B）</text>
+  <text x="855" y="190" text-anchor="middle" font-size="9.5" fill="#1D4ED8" font-weight="600">route_analysis() が呼ぶ先を決める</text>
 
   <line x1="210" y1="169" x2="238" y2="169" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
   <line x1="450" y1="169" x2="478" y2="169" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
   <line x1="710" y1="169" x2="738" y2="169" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
 
-  <!-- wrap A -> B -->
-  <path d="M855,202 L855,238 L130,238 L130,278" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
-  <text x="500" y="232" text-anchor="middle" font-size="10" fill="#6B7280">解析結果（構造化JSON）を検索条件に渡す ＝ 分岐ではなく直列</text>
+  <!-- A2: analysis routing branch -->
+  <rect x="736" y="216" width="112" height="42" rx="7" fill="#EFF6FF" stroke="#1D4ED8" stroke-width="1.5"/>
+  <text x="792" y="233" text-anchor="middle" font-size="10.5" font-weight="600" fill="#1D4ED8">ローカル解析モデル</text>
+  <text x="792" y="248" text-anchor="middle" font-size="9" fill="#6B7280">既定（安い・速い）</text>
+
+  <rect x="862" y="216" width="112" height="42" rx="7" fill="#FFF7ED" stroke="#374151" stroke-width="1.4"/>
+  <text x="918" y="233" text-anchor="middle" font-size="10.5" font-weight="600" fill="#374151">claude-haiku</text>
+  <text x="918" y="248" text-anchor="middle" font-size="9" fill="#6B7280">接続断・5xx 時</text>
+
+  <path d="M820,202 L820,214" fill="none" stroke="#1D4ED8" stroke-width="1.4" marker-end="url(#b)"/>
+  <path d="M900,202 L900,214" fill="none" stroke="#94A3B8" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#b)"/>
+
+  <!-- to decision -->
+  <path d="M855,258 L855,272 L732,272" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+
+  <!-- Decision: retrieval needed? (PROPOSAL) -->
+  <rect x="430" y="248" width="300" height="48" rx="8" fill="#FFFBEB" stroke="#B45309" stroke-width="1.5" stroke-dasharray="6 3"/>
+  <text x="580" y="267" text-anchor="middle" font-size="11.5" font-weight="700" fill="#B45309">検索が要るか（ルールで判定）【提案・設計に無い】</text>
+  <text x="580" y="284" text-anchor="middle" font-size="9.5" fill="#92400E">挨拶・雑談・スコープ外・言い換え依頼は検索しない</text>
+
+  <!-- branch: needed -->
+  <path d="M430,266 L130,266 L130,336" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+  <text x="272" y="260" text-anchor="middle" font-size="9.5" fill="#334155">要る（既定）</text>
+  <!-- branch: not needed -->
+  <path d="M655,296 L655,336" fill="none" stroke="#B45309" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#o)"/>
+  <text x="600" y="318" text-anchor="middle" font-size="9.5" fill="#B45309">要らない → 検索を飛ばす</text>
 
   <!-- ===== Row B ===== -->
-  <rect x="40" y="280" width="180" height="66" rx="8" fill="#FFFFFF" stroke="#1D4ED8" stroke-width="1.5"/>
-  <text x="130" y="304" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2937">② pgvector 検索</text>
-  <text x="130" y="321" text-anchor="middle" font-size="9.5" fill="#6B7280">既存アプリの資産をそのまま使う</text>
-  <text x="130" y="335" text-anchor="middle" font-size="9.5" fill="#6B7280">①の構造化結果で絞り込む</text>
+  <rect x="40" y="338" width="180" height="66" rx="8" fill="#FFFFFF" stroke="#1D4ED8" stroke-width="1.5"/>
+  <text x="130" y="362" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2937">② pgvector 検索</text>
+  <text x="130" y="379" text-anchor="middle" font-size="9.5" fill="#6B7280">既存アプリの資産をそのまま使う</text>
+  <text x="130" y="393" text-anchor="middle" font-size="9.5" fill="#6B7280">①の構造化結果で絞り込む</text>
 
-  <rect x="250" y="280" width="190" height="66" rx="8" fill="#FAF7FF" stroke="#A78BFA" stroke-width="1.5" stroke-dasharray="6 3"/>
-  <text x="345" y="302" text-anchor="middle" font-size="12" font-weight="600" fill="#6D28D9">取得レール</text>
-  <text x="345" y="319" text-anchor="middle" font-size="9.5" fill="#6B7280">チャンク内の命令検出・サニタイズ</text>
-  <text x="345" y="333" text-anchor="middle" font-size="9.5" fill="#DC2626">ここが無いと間接注入を防げない</text>
+  <rect x="250" y="338" width="190" height="66" rx="8" fill="#FAF7FF" stroke="#A78BFA" stroke-width="1.5" stroke-dasharray="6 3"/>
+  <text x="345" y="360" text-anchor="middle" font-size="12" font-weight="600" fill="#6D28D9">取得レール</text>
+  <text x="345" y="377" text-anchor="middle" font-size="9.5" fill="#6B7280">チャンク内の命令検出・サニタイズ</text>
+  <text x="345" y="391" text-anchor="middle" font-size="9.5" fill="#DC2626">ここが無いと間接注入を防げない</text>
 
-  <rect x="470" y="280" width="220" height="66" rx="8" fill="#FFFFFF" stroke="#0D9488" stroke-width="1.5"/>
-  <text x="580" y="302" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2937">③ 回答生成</text>
-  <text x="580" y="319" text-anchor="middle" font-size="9.5" fill="#6B7280">取得チャンクに忠実に・執筆者の口調で</text>
-  <text x="580" y="333" text-anchor="middle" font-size="9.5" fill="#1D4ED8" font-weight="600">route_generation(qa) で振り分け</text>
+  <rect x="470" y="338" width="220" height="66" rx="8" fill="#FFFFFF" stroke="#0D9488" stroke-width="1.5"/>
+  <text x="580" y="360" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2937">③ 回答生成 ＝ 分岐点</text>
+  <text x="580" y="377" text-anchor="middle" font-size="9.5" fill="#6B7280">取得チャンクに忠実に・執筆者の口調で</text>
+  <text x="580" y="391" text-anchor="middle" font-size="9.5" fill="#1D4ED8" font-weight="600">route_generation(qa) で振り分け</text>
 
-  <rect x="720" y="280" width="180" height="66" rx="8" fill="#FFFFFF" stroke="#0D9488" stroke-width="1.5"/>
-  <text x="810" y="304" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2937">品質ゲート</text>
-  <text x="810" y="321" text-anchor="middle" font-size="9.5" fill="#6B7280">source_exists / tone</text>
-  <text x="810" y="335" text-anchor="middle" font-size="9.5" fill="#6B7280">アプリ層 routing.py の責務</text>
+  <rect x="720" y="338" width="180" height="66" rx="8" fill="#FFFFFF" stroke="#0D9488" stroke-width="1.5"/>
+  <text x="810" y="362" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2937">品質ゲート</text>
+  <text x="810" y="379" text-anchor="middle" font-size="9.5" fill="#6B7280">source_exists / tone</text>
+  <text x="810" y="393" text-anchor="middle" font-size="9.5" fill="#6B7280">アプリ層 routing.py の責務</text>
 
-  <rect x="930" y="280" width="190" height="66" rx="8" fill="#FFF7ED" stroke="#374151" stroke-width="1.5"/>
-  <text x="1025" y="304" text-anchor="middle" font-size="12.5" font-weight="600" fill="#374151">Claude Sonnet</text>
-  <text x="1025" y="321" text-anchor="middle" font-size="9.5" fill="#6B7280">難ケース（ルールでここへ）</text>
-  <text x="1025" y="335" text-anchor="middle" font-size="9.5" fill="#6B7280">＋ 品質ゲート不合格の差し戻し先</text>
+  <rect x="930" y="338" width="190" height="66" rx="8" fill="#FFF7ED" stroke="#374151" stroke-width="1.5"/>
+  <text x="1025" y="362" text-anchor="middle" font-size="12.5" font-weight="600" fill="#374151">Claude Sonnet</text>
+  <text x="1025" y="379" text-anchor="middle" font-size="9.5" fill="#6B7280">難ケース（ルールでここへ）</text>
+  <text x="1025" y="393" text-anchor="middle" font-size="9.5" fill="#6B7280">＋ 品質ゲート不合格の差し戻し先</text>
 
-  <line x1="220" y1="313" x2="248" y2="313" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
-  <line x1="440" y1="313" x2="468" y2="313" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
-  <line x1="690" y1="313" x2="718" y2="313" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
-  <line x1="900" y1="313" x2="928" y2="313" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#b)"/>
-  <text x="914" y="305" text-anchor="middle" font-size="9" fill="#94A3B8">不合格</text>
+  <line x1="220" y1="371" x2="248" y2="371" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+  <line x1="440" y1="371" x2="468" y2="371" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+  <line x1="690" y1="371" x2="718" y2="371" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+  <line x1="900" y1="371" x2="928" y2="371" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#b)"/>
+  <text x="914" y="363" text-anchor="middle" font-size="9" fill="#94A3B8">不合格</text>
 
-  <path d="M580,280 L580,260 L1025,260 L1025,278" fill="none" stroke="#1D4ED8" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#b)"/>
-  <text x="800" y="255" text-anchor="middle" font-size="9.5" fill="#1D4ED8">難ケースは生成の前にルールで判定して Claude へ</text>
+  <!-- hard case goes straight to Claude -->
+  <path d="M732,286 L1025,286 L1025,336" fill="none" stroke="#1D4ED8" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#b)"/>
+  <text x="880" y="280" text-anchor="middle" font-size="9.5" fill="#1D4ED8">難ケースはローカルで生成せず Claude へ</text>
 
   <!-- wrap B -> C -->
-  <path d="M810,346 L810,372 L180,372 L180,396" fill="none" stroke="#0D9488" stroke-width="1.6" marker-end="url(#g)"/>
-  <text x="500" y="367" text-anchor="middle" font-size="10" fill="#0D9488">合格</text>
+  <path d="M810,404 L810,420 L180,420 L180,438" fill="none" stroke="#0D9488" stroke-width="1.6" marker-end="url(#g)"/>
+  <text x="500" y="415" text-anchor="middle" font-size="10" fill="#0D9488">合格</text>
 
   <!-- ===== Row C ===== -->
-  <rect x="40" y="398" width="280" height="56" rx="8" fill="#FFFFFF" stroke="#7C3AED" stroke-width="1.6"/>
-  <text x="180" y="419" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2937">出力レール</text>
-  <text x="180" y="437" text-anchor="middle" font-size="9.5" fill="#6B7280">忠実性 / PII漏洩 / プロンプト漏洩 / スキーマ</text>
+  <rect x="40" y="440" width="280" height="56" rx="8" fill="#FFFFFF" stroke="#7C3AED" stroke-width="1.6"/>
+  <text x="180" y="461" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2937">出力レール</text>
+  <text x="180" y="479" text-anchor="middle" font-size="9.5" fill="#6B7280">忠実性 / PII漏洩 / プロンプト漏洩 / スキーマ</text>
 
-  <rect x="350" y="398" width="200" height="56" rx="8" fill="#ECFBF7" stroke="#0D9488" stroke-width="1.5"/>
-  <text x="450" y="419" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2937">出典付き回答</text>
-  <text x="450" y="437" text-anchor="middle" font-size="9.5" fill="#6B7280">利用者へ</text>
+  <rect x="350" y="440" width="200" height="56" rx="8" fill="#ECFBF7" stroke="#0D9488" stroke-width="1.5"/>
+  <text x="450" y="461" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2937">出典付き回答</text>
+  <text x="450" y="479" text-anchor="middle" font-size="9.5" fill="#6B7280">利用者へ</text>
 
-  <line x1="320" y1="426" x2="348" y2="426" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
+  <line x1="320" y1="468" x2="348" y2="468" stroke="#334155" stroke-width="1.6" marker-end="url(#b)"/>
 
   <!-- routing rule box -->
-  <rect x="590" y="390" width="530" height="72" rx="8" fill="#EFF6FF" stroke="#1D4ED8" stroke-width="1.4"/>
-  <text x="606" y="409" font-size="11.5" font-weight="700" fill="#1D4ED8">ルーティングは①と③の2箇所だけ・どちらもルールベース（LLMに判定させない）</text>
-  <text x="606" y="426" font-size="9.5" fill="#374151">route_generation(qa): query_type=="single" かつ sectors が1件 かつ response_mode=="analytical"</text>
-  <text x="606" y="440" font-size="9.5" fill="#374151">かつ special_column を含まない → <tspan font-weight="700">ローカル9B</tspan>。それ以外は claude-sonnet</text>
-  <text x="606" y="455" font-size="9.5" fill="#6B7280">※ LiteLLM の fallbacks は接続断・5xx 用（インフラ層）。品質ゲートの差し戻しはアプリ層で別物。</text>
+  <rect x="590" y="432" width="530" height="72" rx="8" fill="#EFF6FF" stroke="#1D4ED8" stroke-width="1.4"/>
+  <text x="606" y="451" font-size="11.5" font-weight="700" fill="#1D4ED8">分岐は全部ルールベース（LLM に「難しいか」を判定させない）</text>
+  <text x="606" y="468" font-size="9.5" fill="#374151">① route_analysis(): 既定でローカル。接続断・5xx は LiteLLM が haiku へ（インフラ層）</text>
+  <text x="606" y="482" font-size="9.5" fill="#374151">③ route_generation(qa): query_type=="single" かつ sectors 1件 かつ analytical かつ</text>
+  <text x="606" y="496" font-size="9.5" fill="#374151">special_column 無し → <tspan font-weight="700">ローカル9B</tspan>。それ以外は claude-sonnet（品質ゲートの差し戻しは別物）</text>
 
   <!-- footnotes -->
-  <text x="28" y="512" font-size="10.5" fill="#6B7280">※ <tspan font-weight="700">実装状況</tspan>: 本図は設計であり src/ は未着手。Phase 1（クエリ解析のローカル化）→ Phase 2（回答生成9B＋ルーティング＝コストの本丸）→ Phase 3（セキュリティ）の順に入れる。</text>
-  <text x="28" y="532" font-size="10.5" fill="#1D4ED8">※ <tspan font-weight="700">配信は vLLM 固定</tspan>（Ollama は不可）。既定 Nemotron は Mamba+Attention ハイブリッドで GGUF 非対応、解析側 Qwen3.5 も Ollama 非対応。好みではなくモデル側の制約。</text>
-  <text x="28" y="552" font-size="10.5" fill="#DC2626">※ <tspan font-weight="700">取得レールを飛ばすと間接プロンプトインジェクションは防げない</tspan>。loop15 実測では入力レール単独で 0/2（参考資料に埋め込まれた指示は通常の質問に見えるため）。</text>
-  <text x="28" y="572" font-size="10.5" fill="#1D4ED8">※ <tspan font-weight="700">rerank は本設計に未反映</tspan>。nemo-pipeline loop14 では②の後に rerank を挟むと probe 0.4724 → 0.6332（歴代最高）。②と③の間に入れる価値がある。</text>
-  <text x="28" y="596" font-size="11" fill="#0D9488" font-weight="600">↑ 学習（作る）と評価は別図「パイプライン全体像（architecture-overview.svg）」。そこで合格した 9B が、この「③ 回答生成」に載る。</text>
+  <text x="28" y="548" font-size="10.5" fill="#B45309">※ <tspan font-weight="700">検索の要否分岐は本設計に無い（提案）</tspan>。全クエリで検索すると、挨拶・雑談・スコープ外・直前回答の言い換えでも pgvector を引いて<tspan font-weight="700">レイテンシと埋め込みコストを払う</tspan>。①が出す query_type / sectors / needs_overall_context で機械的に判定できる。</text>
+  <text x="28" y="568" font-size="10.5" fill="#B45309">　 導入するなら<tspan font-weight="700">「検索不要と判定した質問の正答率が落ちていないか」を必ず測る</tspan>。検索を飛ばして誤答が増えるなら本末転倒。</text>
+  <text x="28" y="592" font-size="10.5" fill="#DC2626">※ <tspan font-weight="700">ローカル解析モデルは nemo-pipeline で作る</tspan>。設計書は Qwen3.5-4B を Unsloth で学習としているが、nemo-pipeline の analysis タスクは<tspan font-weight="700">出力スキーマが完全に同一</tspan>で評価ハーネスも既にある。手順は nemo-pipeline/docs/38-query-analysis-runbook.md。</text>
+  <text x="28" y="616" font-size="10.5" fill="#1D4ED8">※ <tspan font-weight="700">配信は vLLM 固定</tspan>（Ollama 不可。GGUF 非対応）。<tspan font-weight="700">rerank は未反映</tspan> — loop14 では②の後に挟んで probe 0.4724 → 0.6332。</text>
+  <text x="28" y="640" font-size="10.5" fill="#7C3AED">＋（任意）出口ガバナンス：外部呼び出しを OpenShell の privacy router に集約し、宛先allowlist・認証情報分離・監査を"アプリ外"で強制（docs/07・アルファ）。</text>
+  <text x="28" y="668" font-size="11" fill="#0D9488" font-weight="600">↑ 学習（作る）と評価は別図「パイプライン全体像（architecture-overview.svg）」。そこで合格したモデルが①と③に載る。</text>
 </svg>

@@ -133,16 +133,47 @@ Streamlit → [Haiku: クエリ解析] → pgvector検索 → [Sonnet: 回答生
 Streamlit
   → [入力レール: インジェクション検知 / PII / スコープ]        ← Phase 3
   → LiteLLM ゲートウェイ(全I/OをLangFuse記録 = 監査証跡)        ← Phase 2/3
-      → [クエリ解析] route → ローカル(qwen3-analysis) or Haiku   ← Phase 1
-      → pgvector検索
-      → [取得レール: チャンク内命令検出・サニタイズ]            ← Phase 3
+      → [クエリ解析] route → ローカル or Haiku(接続断・5xx時)     ← Phase 1
+      → [検索が要るか判定(ルール)] ─ 要らない ──────┐            ← 【提案・未決定】
+      → pgvector検索                                │
+      → [取得レール: チャンク内命令検出・サニタイズ] │            ← Phase 3
+      ←──────────────────────────────────────────────┘
       → [回答生成] route → ローカル(qwen3-gen) or Sonnet         ← Phase 2
          └ 品質ゲート(source_exists / tone)不合格 → Claudeへフォールバック
   → [出力レール: 忠実性 / PII漏洩 / プロンプト漏洩 / スキーマ]  ← Phase 3
   → 出典付き回答
 ```
 
-LiteLLM が唯一の関所(choke point)。差し込み口は実質 **2箇所**(クエリ解析・回答生成)。
+LiteLLM が唯一の関所(choke point)。モデルの差し込み口は実質 **2箇所**(クエリ解析・回答生成)で、
+**そのどちらもルーティング点**である。分岐はすべてルールベースで、LLM に「難しいか」を判定させない。
+
+### 検索の要否分岐（提案・未決定）
+
+現状の設計は**全クエリで pgvector を引く**。しかし挨拶・雑談・スコープ外の依頼・
+直前回答の言い換え依頼などは検索が不要で、**引くだけレイテンシと埋め込みコストを払う**。
+
+クエリ解析(①)の出力に `query_type` / `sectors` / `needs_overall_context` があるので、
+**追加のLLM呼び出しなしにルールで判定できる**。例:
+
+```python
+def needs_retrieval(qa: dict) -> bool:
+    if qa.get("query_type") in ("chitchat", "out_of_scope"):   # 要スキーマ拡張
+        return False
+    if not qa.get("sectors") and not qa.get("commodities") \
+       and not qa.get("needs_overall_context"):
+        return False        # 対象も期間も文脈も要らない = 検索する対象がない
+    return True
+```
+
+**採否は測ってから決める**。導入するなら次を必ず確認すること:
+
+- **「検索不要」と判定した質問群の正答率が落ちていないか**（落ちるなら本末転倒）
+- 判定ミスで検索を飛ばした場合に、品質ゲート(`source_exists`)が拾えるか
+- スキップ率とレイテンシ改善の実測値（改善が小さいなら複雑さに見合わない）
+
+> ⚠ 現行スキーマに「検索不要」を表すフィールドは無い。導入するなら `query_type` の値域拡張か
+> `needs_retrieval` の追加が要り、**クエリ解析モデルの再学習または再蒸留が発生する**。
+> Phase 1 を学習なしで終えられる見込みがある以上、**これは Phase 2 以降で検討するのが安全**。
 
 ---
 
@@ -244,7 +275,23 @@ LiteLLM が唯一の関所(choke point)。差し込み口は実質 **2箇所**(�
          - penalty_if(empty or repetition or no-EOS)
   ```
   → フォーマット遵守とEOSを直接矯正(前回の崩壊の再発防止)。
-- **ツール**: Unsloth(単機最速・GRPO・Colab配布)。GUI派は LLaMA-Factory。NeMo-RL はデッキ上の「DC規模版」紹介に留める。
+- **ツール**: ~~Unsloth(単機最速・GRPO・Colab配布)。GUI派は LLaMA-Factory。NeMo-RL はデッキ上の「DC規模版」紹介に留める。~~
+  → **【2026-08 改訂】nemo-pipeline（NeMo-RL）で作る。** 手順は
+  `nemo-pipeline/docs/38-query-analysis-runbook.md`。
+
+  > **改訂の理由**: 本節を書いた 2026-07 以降に nemo-pipeline が15周回り、その `analysis` タスクが
+  > **本 Phase のクエリ解析と同じもの**だと分かった。出力スキーマ（§6.1 の8フィールド）が完全に一致し、
+  > 評価指標（`analysis_match` / `sectors_match` / `query_type_match` / `date_range_match` /
+  > `schema_valid`）も `s6_evaluation/eval.yaml` に実装済み、学習データも
+  > **train 316 / valid 39 / heldout 28 件が既にある**（teacher = claude-sonnet）。
+  > Unsloth 側で作り直すと、15周ぶんの罠カタログ・課金ゲート・リーク検査が効かなくなる。
+  >
+  > **さらに重要**: `analysis_match` は **base（未学習）で既に 0.836**（loop9 実測）で、
+  > §5.3 の合格ライン 0.85 との差 0.014 は n=70 では測定誤差と区別がつかない。
+  > **Phase 1 は学習せずに配信設定だけで終わる可能性が高い。**
+  > 逆に loop9 round-1 では別目的の SFT の巻き添えで analysis が **0.836 → 0.115** に崩壊しており、
+  > 「base が強いタスクに SFT を当てるな」の典型例になっている。
+  > **必ず base を先に測ってから学習の要否を決めること。**
 - **再現性**: 200 iterごと S3/Drive にチェックポイント。`caffeinate -i` / spot中断前提の区切り。連続学習≠分割学習(Adam reset)を考慮し1晩完走規模に。
 - **学習中の健全性チェック**: 数件 inference して 空応答/反復/EOS閉じを目視(callback)。
 
