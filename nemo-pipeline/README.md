@@ -3,7 +3,8 @@
 データ収集 → 蒸留 → (継続事前学習) → SFT → 強化学習(GRPO) → 評価 → ガードレール → **検索拡張(RAG)** を
 **NVIDIA NeMoのライブラリ層（無償・Apache 2.0）だけ**で貫くパイプライン。
 
-**15周まわした実測記録つき**（累計 ~$400）。各周の結論は `docs/loop-01〜15-report.md`、
+**15周まわした実測記録つき**（累計 ~$400）。各周の結論は `docs/loop-*-report.md`（**14本**。
+loop11 はスキル化のみでレポートを書いていないため欠番）、
 踏んだ罠は `claude-skills/nemo-pipeline-runner/references/traps.md` にある。
 **最大の発見は「知識注入は DAPT ではなく RAG」**（DAPT 見積り $300-550 に対し RAG 実測 $12 で
 probe 0.0402 → 0.4724、rerank 追加で 0.6332）。
@@ -32,7 +33,7 @@ microservice にそのまま移行できる形式なので、今 library で作�
 ![パイプライン全体像](docs/architecture-overview.svg)
 
 > 緑タグ＝各ステージで使うNVIDIA NeMoライブラリ。**黒タグ＝NeMo外**（S2 の教師＝Claude API、S6＝自作採点器）。
-> 赤破線＝held-out（学習・報酬に使わず評価専用）。図中の数値は `docs/loop-01〜15-report.md` の実測。
+> 赤破線＝held-out（学習・報酬に使わず評価専用）。図中の数値は `docs/loop-*-report.md` の実測。
 > **「使う」＝実行時のモデル使い分け/検索/ルーティングは別アーキ**なので別図に分離: `docs/serving-routing-overview.svg`
 
 ![使う（推論構成）](docs/serving-routing-overview.svg)
@@ -77,16 +78,16 @@ microservice にそのまま移行できる形式なので、今 library で作�
 |---|---|---|
 | `common/` | 共有コード | reward.py（検証可能報酬）/ schema.py / prompts.py / finqa.py / label_lint.py |
 | `s0_eval_design/` | S0 評価設計 | thresholds（eval.yaml に集約）と base 測定の手順 |
-| `s1_curation/` | S1 収集・管理 | s1_curate.py / fetch_dataset.py / fetch_edinet_bench.py / curator_stage.py / convert_docs.py / caption_figures.py |
+| `s1_curation/` | S1 収集・管理 | s1_curate.py / fetch_dataset.py / fetch_edinet_bench.py / curator_stage.py / convert_docs.py / caption_figures.py / data_viewer.py |
 | `s2_distillation/` | S2 蒸留 | s2_distill.py（`--dry-run` あり）/ s2_finqa.py |
 | `s3_pretraining/` | S3 DAPT | run_dapt.sh / dapt.yaml / dapt_train.py / prep_corpus.py（**loop10 で実走済み**） |
 | `s4_sft/` | S4 SFT/LoRA | run_sft.sh / sft_lora.yaml / sft_finqa.yaml / sft_grounded.yaml / merge_lora.py（**loop1-13 で実走済み**） |
-| `s5_rl/` | S5 GRPO | grpo_qwen.yaml / grpo_analysis.yaml / grpo_finqa.yaml / finance_env.py / prep_rl_data.py |
+| `s5_rl/` | S5 GRPO | grpo_qwen.yaml / grpo_analysis.yaml / grpo_finqa.yaml / finance_env.py / prep_rl_data.py / run_grpo_finance.py |
 | `s6_evaluation/` | S6 評価 | s6_eval.py（合否 exit code）/ probe_qa.py / eval.yaml / eval_finqa.yaml |
-| `s7_guardrails/` | S7 ガードレール | config/（config.yml + rails.co）/ check_rails.py / llm_proxy.py / garak_rest.json |
+| `s7_guardrails/` | S7 ガードレール | config/（config.yml + rails.co）/ check_rails.py / **stub_llm.py + wait_http.py（`guardrails-dry` の実体・GPU不要）** / llm_proxy.py / garak_rest.json / render_config.py / make_garak_cfg.py / inspect_garak.py / diag_rails.py |
 | **`s8_retrieval/`** | **S8 検索拡張 RAG** | build_index.py / embedder.py / retrieve.py / reranker.py / recall_eval.py / chunker.py / build_grounded_sft.py |
 | `tests/` | ユニット・回帰テスト | 11ファイル。`for t in tests/test_*.py; do python3 "$t"; done` で全部走る（pytest 不要） |
-| `docs/` | 文書 | 00-environment / 10-runbook / **loop-01〜15-report（実測の出典）** / 34-38（勉強会の資料一式） |
+| `docs/` | 文書 | 00-environment / 10-runbook / **loop-*-report 14本（実測の出典・loop11 は欠番）** / 34-38（勉強会の資料一式） |
 
 ## 🖥 GPU の実績と VRAM
 

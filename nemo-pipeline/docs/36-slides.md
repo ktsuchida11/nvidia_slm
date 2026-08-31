@@ -62,7 +62,7 @@ Marp で PDF 化: npx @marp-team/marp-cli@4.2.3 36-slides.md -o slides.pdf
 | 回した周回数 | **15周**（1周 = 計画 → 実装 → 検証 → 総括） |
 | 実費 | **~$395-410**（GPU spot + 教師API） |
 | GPU | AWS g6e 系 spot（L40S 48GB / 実効44GB）1〜4枚 |
-| 成果物 | パイプライン一式 + 15本の総括レポート + AIエージェント用スキル |
+| 成果物 | パイプライン一式 + 14本の総括レポート + AIエージェント用スキル |
 
 <!-- 出典: 各 loop report のコスト節、billing-gates.md -->
 
@@ -684,7 +684,7 @@ claude-skills/nemo-pipeline-runner/
 | 見たいもの | ファイル |
 | --- | --- |
 | E2E の手順 | `docs/10-runbook.md` |
-| 各周の実測と結論 | `docs/loop-01〜15-report.md` |
+| 各周の実測と結論 | `docs/loop-*-report.md`（14本） |
 | 手法選択の決定表 | `references/decision-table.md` |
 | 罠カタログ | `references/traps.md` |
 | テストシナリオ | `docs/20-test-scenarios.md` |

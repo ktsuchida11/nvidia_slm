@@ -176,7 +176,7 @@
     <rect x="612" y="742" width="254" height="34" rx="17" fill="#D97706"/><text x="739" y="764" text-anchor="middle" fill="#FFFFFF">課金は人間の承認ゲート</text>
     <rect x="894" y="742" width="246" height="34" rx="17" fill="#7C3AED"/><text x="1017" y="764" text-anchor="middle" fill="#FFFFFF">多層防御（OWASP LLM Top10）</text>
   </g>
-  <text x="48" y="796" font-size="9.5" fill="#94A3B8">数値は docs/loop-01〜15-report.md の実測。図と実装が食い違ったら実装（Makefile / 各ステージ）を正とする。</text>
+  <text x="48" y="796" font-size="9.5" fill="#94A3B8">数値は docs/loop-*-report.md の実測（14本。loop11 はスキル化のみでレポート無し）。図と実装が食い違ったら実装（Makefile / 各ステージ）を正とする。</text>
 
   <!-- NeMo library tags (NVIDIA green) -->
   <g fill="#FFFFFF" font-weight="600" text-anchor="middle">
