@@ -4,10 +4,19 @@
 
 既存RAGチャットアプリに、ローカル学習モデル＋LiteLLMルーティング＋ガードレールを最小差分で組み込むための設計・構成一式。
 
+> ⚠ **これは設計であって実装ではありません。** `src/` は未着手です。
+> **載せるモデルは `nemo-pipeline/` で作ります**（そちらは15周まわした実装があります）。
+> 2026-08 に判明した重要な点: **Phase 1（クエリ解析）は nemo-pipeline の `analysis` タスクと
+> 同じもの**で、出力スキーマ・評価指標・学習データが既に揃っています。
+> しかも `analysis_match` は **base（未学習）で 0.836** あり、合格ライン 0.85 との差は
+> 測定誤差の範囲です。**学習せずに配信設定だけで終わる可能性が高い**ので、
+> 着手前に `nemo-pipeline/docs/38-query-analysis-runbook.md` を読んでください。
+
 ## 中身
 ```
 local-rag-llm/
 ├── README.md                                # 本ファイル（索引）
+├── serving-routing-overview.svg             # 推論構成図（直列フロー・ルーティング2箇所）
 ├── local-llm-study-deck-outline.md          # 勉強会構成案（作る・使う・守る）
 ├── local-rag-llm-implementation-design.md   # 実装設計書（Phase 1〜4 / 評価 / 統合 / 環境 / セキュリティ）
 └── templates/                               # 検証済み環境スケルトン
@@ -36,8 +45,11 @@ local-rag-llm/
 5. 学習は Colab/EC2、本番推論は自前GPUホスト（Linux or WindowsのWSL2）。
 
 ## 設計の前提（要点）
-- 開発=DevContainer（CPU/API面）/ 学習=Colab/EC2 / 本番推論=自前GPUホスト
-- 評価ファースト: 指標・閾値・held-out評価セットを先に用意し base を測ってから学習
+- 開発=DevContainer（CPU/API面）/ **学習=`nemo-pipeline/`（AWS g6e spot = L40S 48GB で15周実績）** / 本番推論=自前GPUホスト
+- 評価ファースト: 指標・閾値・held-out評価セットを先に用意し **base を測ってから学習の要否を決める**
+  （loop9 では base が強いタスクに SFT を当てて 0.836 → 0.115 に壊した）
 - コンテナ間はサービス名直結（host.docker.internal頼みはLinuxで壊れる）
-- Qwen3.5 は現状 Ollama 非対応 → llama.cpp / vLLM で配信
+- **配信は vLLM 固定**。Nemotron-Nano-9B-v2 は Mamba+Attention ハイブリッドで GGUF 非対応、
+  Qwen3.5 も Ollama 非対応。**Ollama / llama.cpp は使えない**（好みではなくモデル側の制約）
+- 分岐は全部ルールベース（LLM に「難しいか」を判定させない）。ルーティング点は①クエリ解析と③回答生成の2箇所
 - 経済性の数値は見積もり。実測で再確認
