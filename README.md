@@ -27,16 +27,22 @@
 
 | ディレクトリ | 内容 | 主な読み手 |
 |---|---|---|
-| **`nemo-pipeline/`** | NVIDIA NeMoライブラリ群でのパイプライン構築（S0評価設計→S7ガードレール）。実装済スクリプト＋Makefile＋E2Eランブック | パイプラインを手を動かして作る人 |
-| **`local-rag-llm/`** | 学習済みモデルを既存チャットアプリへ統合する設計（LiteLLMルーティング・品質ゲート）＋compose/DevContainerテンプレート | アプリに組み込む人 |
+| **`nemo-pipeline/`** | NVIDIA NeMoライブラリ群でのパイプライン構築（**S0 評価設計 → S8 検索拡張RAG**）。実装済スクリプト＋Makefile＋E2Eランブック＋**15周ぶんの実測レポート** | パイプラインを手を動かして作る人 |
+| **`local-rag-llm/`** | 学習済みモデルを既存チャットアプリへ統合する**設計**（LiteLLMルーティング・品質ゲート）＋compose/DevContainerテンプレート。**`src/` は未着手** | アプリに組み込む人 |
 
-## まず動かす（API・GPU不要・数分）
+## まず動かす（API・GPU・ネットワーク不要・数分）
 ```bash
 cd nemo-pipeline
 make setup
-make curate distill-dry eval-dry     # データ整形→蒸留配管→評価配管 をローカルで検証
+docker pull python:3.12-bookworm                        # 1.5GB。イメージのビルドは不要
+printf 'PY_IMG := python:3.12-bookworm\n' > hostpath.mk  # 既定の slim は arm64 Mac で動かない
+
+make curate-demo distill-dry eval-dry   # データ整形→蒸留配管→評価配管 をローカルで検証
 ```
 ✅ `"pass": true` が出れば配管はOK。続きは `nemo-pipeline/docs/10-runbook.md`（E2E手順）へ。
+
+> `make curate`（demo なし）は `data/raw/` の**実データ全量**が対象になる。
+> デモ・演習用は `data/demo_raw/` に隔離してある。
 
 ## 読む順番
 1. `nemo-pipeline/README.md` … 構成図・K8s不要の理由・公式マニュアルリンク
