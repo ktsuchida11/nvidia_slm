@@ -68,14 +68,20 @@
 
 ## 4. $0デモ台本（10分・全て DevContainer で実測済み 2026-08-27）
 
-事前に `make build-tools` を済ませ、画面は**ターミナル1枚**にする。1コマンド1メッセージ。
+画面は**ターミナル1枚**にする。1コマンド1メッセージ。イメージのビルドは要らない
+（素の `python:3.12-bookworm` で全部通る。`35-handson-plan.md` §1 で実測確認済み）。
 
 ### デモ1: S1 キュレーション（2分）— 「前処理は目に見える」
 
 ```bash
-make curate           # data/raw の6件サンプルを投入済みの状態から
-cat data/curated/stats.json
+make curate-demo      # data/demo_raw の6件サンプルを投入済みの状態から
+cat data/demo_curated/stats.json
 ```
+
+> **`make curate` ではなく `make curate-demo`**。開発機の `data/raw/` には EDINET 実データが
+> 2,530件入っているので、`make curate` を叩くと全量が対象になり **kept 2530** が出てしまう
+> （台本の数字が再現しない上に `data/curated/` を再生成してしまう）。
+> `curate-demo` は `data/demo_raw` → `data/demo_curated` に隔離されている。
 
 実測出力（このまま出る）:
 
@@ -124,7 +130,8 @@ make rag-rerank-dry
 
 - ネットワーク不要・GPU不要・API キー不要。**Docker さえ動けば全部通る**
 - それでも落ちたら: 実行済みの出力を貼ったスライド（`36-slides.md` 付録）に切り替える
-- `nemo-tools:latest` イメージが無いと全部落ちる → **前日に `make build-tools` を必ず実行**
+- 使う Python イメージが手元に無いと全部落ちる → **前日に `docker pull python:3.12-bookworm`**
+  （`hostpath.mk` の `PY_IMG` がそれを指していることも確認する）
 
 ## 5. 想定質問と答え（準備しておく）
 
@@ -139,8 +146,11 @@ make rag-rerank-dry
 
 ## 6. 準備チェックリスト（前日）
 
-- [ ] `make build-tools` 実行（初回は5-10分。PyPI へ出られる環境で）
-- [ ] `data/raw/` にデモ用サンプル6件を配置（`20-test-scenarios.md` TS-01 のスクリプト）
+- [ ] `docker pull python:3.12-bookworm`（イメージのビルドは不要）
+- [ ] **`data/demo_raw/`** にデモ用サンプル6件を配置（`37-handson-runbook.md` Step 1-1 のスクリプト。
+      **`data/raw/` に置かないこと** — 実データと混ざってデモの数字が変わる）
+- [ ] **スライドを PDF 化して1枚ずつ目視**（`npx @marp-team/marp-cli@4.2.3 docs/36-slides.md -o slides.pdf`）。
+      **日本語フォントのあるホストで変換すること** — 無い環境だと全部豆腐（□）になる
 - [ ] デモ4本を通しで1回流して所要時間を測る
 - [ ] `data/distilled/` の実データが壊れていないか確認（**`make distill-dry` は別ディレクトリに出る**ように修正済み）
 - [ ] 画面共有のフォント拡大・`results/` を消さない

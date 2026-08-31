@@ -32,7 +32,7 @@ MLFLOW_URI ?= http://host.docker.internal:$(MLFLOW_PORT)
 # データビューア用ポート（衝突時は hostpath.mk で上書き）
 VIEWER_PORT ?= 8501
 
-.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-curator distill dapt-prep probe-gen probe-eval relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-img guardrails-diag garak-inspect serve-llm-proxy guardrails-test guardrails-test-raw guardrails-check guardrails-dry guardrails-dry-rails serve-embed retriever-index retriever-index-dry retriever-recall retriever-recall-dry rag-eval rag-eval-dry serve-rerank rag-rerank-dry tracking tensorboard viewer clean
+.PHONY: setup extract caption fetch fetch-edinet-bench curate curate-demo curate-curator distill dapt-prep probe-gen probe-eval relabel lint-labels relabel-lint augment eval-augment distill-dry finqa-filter finqa-build finqa-dry dapt sft grpo convert-sft convert-grpo serve-sft serve-grpo eval eval-dry eval-finqa eval-finqa-dry guardrails guardrails-img guardrails-diag garak-inspect serve-llm-proxy guardrails-test guardrails-test-raw guardrails-check guardrails-dry guardrails-dry-rails serve-embed retriever-index retriever-index-dry retriever-recall retriever-recall-dry rag-eval rag-eval-dry serve-rerank rag-rerank-dry tracking tensorboard viewer clean
 
 tracking:            ## 実験トラッキング(MLflow)を閉域で常駐起動 :5000
 	mkdir -p $(PWD)/mlflow
@@ -78,8 +78,14 @@ fetch:               ## 金融データセット取得（商用可のみ。repo/
 	$(RUN) $(PY_IMG) bash -lc "(pip -q install datasets huggingface_hub 2>/dev/null || true) && \
 	  python /pipeline/s1_curation/fetch_dataset.py --repo $(REPO) --license $(LICENSE) --out /data/raw $(if $(LIMIT),--limit $(LIMIT)) $(if $(CONFIG),--config $(CONFIG)) $(if $(FIELDS),--keep-fields $(FIELDS))"
 
-curate:              ## S1 収集・管理（CPUで可。Curator委譲は --engine curator）
-	$(RUN) $(PY_IMG) python /pipeline/s1_curation/s1_curate.py --in /data/raw --out /data/curated
+curate:              ## S1 収集・管理（CPUで可。Curator委譲は --engine curator。IN/OUT で入出力を差し替え可）
+	$(RUN) $(PY_IMG) python /pipeline/s1_curation/s1_curate.py \
+	  --in $(or $(IN),/data/raw) --out $(or $(OUT),/data/curated)
+
+# デモ・演習用（少数サンプルを実データと混ぜない）。data/raw に実コーパスが入っている
+# 環境で `make curate` を叩くと全量が対象になり、台本の数字（kept 2）が再現しない。
+curate-demo:         ## S1 デモ: data/demo_raw → data/demo_curated（実データに触らない）
+	$(MAKE) curate IN=/data/demo_raw OUT=/data/demo_curated
 
 # fasttext が C++ コンパイルを要するため gcc 入り bookworm を既定にする（slim 不可）
 CURATOR_PY_IMG ?= python:3.12-bookworm

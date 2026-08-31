@@ -8,17 +8,20 @@
 **作る（データ→蒸留→学習→評価）・使う（アプリ統合・コスト最適化）・守る（ガードレール）**
 までを、Linuxコンテナ完結（**Kubernetes不要**）で体験する教材。
 
-**主目的: NVIDIA NeMoシリーズ（Curator / Framework / RL / Evaluator / Guardrails / Retriever）でパイプラインを構築し、動かす環境を作ること。** `nemo-pipeline/` が本流で、フロンティアAPI・OpenShell等は代替・補完オプション。
+**主目的: NVIDIA NeMoシリーズ（Curator / Framework / NeMo-RL / Guardrails / Retriever）でパイプラインを構築し、動かす環境を作ること。** `nemo-pipeline/` が本流で、フロンティアAPI・OpenShell等は代替・補完オプション。
+
+> S6 評価は当初 NeMo Evaluator を想定していた（`docs/01-plan.md`）が、**実際には自作の採点器
+> （`s6_evaluation/`）で15周を回した**。合否閾値とリーク検査を自前で握る必要があったため。
 
 ## 全体像
 
 ![パイプライン全体像](architecture-overview.svg)
 
-`architecture-overview.svg` … 作る（学習）・使う（配信/評価）・守るの流れを1枚で俯瞰（CPU/GPUゾーン・NeMoライブラリ緑タグ・held-out分離）。
+`architecture-overview.svg` … 作る（S1-S2）・学習（S3-S5）・知識を足す（S8 RAG）・使う（S6 評価）・守る（S7）の5段を1枚で俯瞰。**緑タグ＝NeMoライブラリ／黒タグ＝NeMo外**（S2 の教師は Claude API、S6 は自作採点器）。主要な実測値を図中に入れてある。
 
 ![使う（推論構成）](serving-routing-overview.svg)
 
-`serving-routing-overview.svg` … **使う（推論構成）の別図**。学習とは別に、複数モデルを役割で使い分ける実行時アーキ（LiteLLMルーティング・RAG検索・品質ゲート・Claudeフォールバック・ガードレール）。
+`serving-routing-overview.svg` … **使う（推論構成）の別図**。学習とは別に、実行時に複数モデルを役割で使い分けるアーキ（LiteLLMルーティング・**検索→rerank**・品質ゲート・Claudeフォールバック・ガードレール）。**取得レールが未発火＝間接プロンプトインジェクションが素通り**という現状の穴も明示している。
 
 ## 2つのルート
 

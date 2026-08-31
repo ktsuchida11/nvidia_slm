@@ -8,7 +8,12 @@ header: 'NVIDIA NeMo で小規模言語モデルのパイプラインを回す �
 <!--
 第1回セッション用スライド（90分）。構成の根拠は docs/34-session-outline.md。
 数値は全て docs/loop-XX-report.md からの引用。記憶で書かない・書き換えない。
-Marp で PDF 化: npx @marp-team/marp-cli@latest 36-slides.md -o slides.pdf
+Marp で PDF 化: npx @marp-team/marp-cli@4.2.3 36-slides.md -o slides.pdf
+
+★ 日本語フォントが入っていない環境で変換すると、**全ての日本語が豆腐（□）になる**。
+  DevContainer 内は日本語フォントが無いため変換不可（2026-08-31 に確認）。
+  **フォントのあるホスト（macOS 等）で変換し、PDF を開いて必ず目視すること。**
+  HTML/PNG/PDF の生成自体は 55枚すべてエラーなく通ることは確認済み。
 -->
 
 # NeMo で SLM パイプラインを回す
@@ -80,6 +85,12 @@ Marp で PDF 化: npx @marp-team/marp-cli@latest 36-slides.md -o slides.pdf
 ---
 
 ## パイプライン S0〜S8
+
+<!-- 9行の表が既定サイズだと下端をはみ出す（2026-08-31 に描画して確認）。
+     S0〜S8 を1画面で見せるのがこの枚の目的なので、分割せず表だけ縮める -->
+<style scoped>
+table { font-size: 0.78em; }
+</style>
 
 | 段 | 何をする | 主なツール |
 | --- | --- | --- |
@@ -553,7 +564,7 @@ n=300 で SE は ±0.02。
 ## デモ（ターミナルに切り替え）
 
 ```bash
-make curate            # ① 前処理は目に見える
+make curate-demo       # ① 前処理は目に見える
 make eval-dry          # ② 課金前に配管を通す
 make guardrails-dry    # ③ 攻撃と良性を同時に見る
 make rag-rerank-dry    # ④ 検索と読解を分けて測る
@@ -685,7 +696,7 @@ claude-skills/nemo-pipeline-runner/
 
 ---
 
-## デモ① `make curate`
+## デモ① `make curate-demo`
 
 ```json
 {
